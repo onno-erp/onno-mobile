@@ -5,7 +5,9 @@ import {
   ActivityIndicator,
   Animated,
   AppState,
+  Dimensions,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -37,7 +39,15 @@ import { colors } from './src/divkit/theme';
 type Status = 'connecting' | 'ready' | 'error' | 'login';
 type Shell = Awaited<ReturnType<OnecClient['shell']>>;
 
-const VIEWPORT = 'mobile';
+// An iPad (or a large-screen Android tablet) reports the `tablet` viewport, so the
+// server returns its tablet layout: 2-column dashboards/content, an extra nav
+// section, and a *compact* nav pill the host hugs into the bottom-right corner
+// (see IS_TABLET in the nav bar below). Phones get `mobile` — 1-column content and
+// the full-width bottom bar. Decided once at launch off the device's shortest side
+// so it doesn't flip between tablet/mobile when an iPad rotates.
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+const IS_TABLET = (Platform.OS === 'ios' && Platform.isPad) || Math.min(SCREEN_W, SCREEN_H) >= 600;
+const VIEWPORT = IS_TABLET ? 'tablet' : 'mobile';
 const NAV_RESERVE = 88; // height the floating bottom bar occupies
 const NAV_BOTTOM_CLEARANCE = 8; // small gap above the home indicator (the pill draws its own 12px margin on top)
 const TOP_FADE = 28; // length of the dissolve tail just below the safe area
@@ -571,16 +581,20 @@ export default function App() {
             automaticallyAdjustKeyboardInsets
             showsVerticalScrollIndicator={false}
           >
-            <DivCard
-              envelope={loginCard}
-              theme={theme}
-              client={clientRef.current!}
-              baseUrl={serverUrl}
-              fire={onAction}
-            />
-            <Pressable onPress={showPicker} hitSlop={8} style={styles.changeServer}>
-              <Text style={[styles.changeServerText, { color: c.muted }]}>Change server</Text>
-            </Pressable>
+            {/* Cap + centre the card so it doesn't stretch into a wide slab on an iPad.
+                The cap is wider than any phone, so phones render exactly as before. */}
+            <View style={styles.authColumn}>
+              <DivCard
+                envelope={loginCard}
+                theme={theme}
+                client={clientRef.current!}
+                baseUrl={serverUrl}
+                fire={onAction}
+              />
+              <Pressable onPress={showPicker} hitSlop={8} style={styles.changeServer}>
+                <Text style={[styles.changeServerText, { color: c.muted }]}>Change server</Text>
+              </Pressable>
+            </View>
           </ScrollView>
         ) : (
           // Fallback for a server with no /api/divkit/login endpoint.
@@ -668,7 +682,15 @@ export default function App() {
           // a *floating* bar, so it only needs a small clearance above the home
           // indicator, not a full safe-area inset (which left a large empty gap).
           <View
-            style={[styles.navBar, { paddingBottom: insets.bottom > 0 ? NAV_BOTTOM_CLEARANCE : 0 }]}
+            style={[
+              styles.navBar,
+              // Tablet: the server builds a compact pill (sized to its tabs) meant to
+              // hug a corner — align it to the right so it doesn't stretch full-width
+              // like the phone bar (the host owns this placement; see the server's
+              // ShellLayoutBuilder.bottomNav comment).
+              IS_TABLET && styles.navBarTablet,
+              { paddingBottom: insets.bottom > 0 ? NAV_BOTTOM_CLEARANCE : 0 },
+            ]}
             pointerEvents="box-none"
             onLayout={(e) => setNavHeight(e.nativeEvent.layout.height)}
           >
@@ -740,6 +762,8 @@ const styles = StyleSheet.create({
   btnOutline: { borderWidth: 1, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
   btnText: { color: '#FFFFFF', fontWeight: '600', fontSize: 13 },
   navBar: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  navBarTablet: { alignItems: 'flex-end' },
+  authColumn: { width: '100%', maxWidth: 480, alignSelf: 'center' },
   changeServer: { alignItems: 'center', marginTop: 24, paddingVertical: 6 },
   changeServerText: { fontSize: 14, fontWeight: '500' },
 });

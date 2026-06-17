@@ -131,7 +131,9 @@ export function ConnectScreen({ theme, servers, bottomInset = 0, onConnect, onRe
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  content: { padding: 24, paddingTop: 72, gap: 12 },
+  // Cap the column and centre it so it doesn't stretch into a long line on an iPad.
+  // The cap is wider than any phone, so phones render exactly as before.
+  content: { padding: 24, paddingTop: 72, gap: 12, width: '100%', maxWidth: 480, alignSelf: 'center' },
   title: { fontSize: 24, fontWeight: '700' },
   subtitle: { fontSize: 14, marginBottom: 8 },
   inputRow: { flexDirection: 'row', gap: 8, alignItems: 'stretch' },

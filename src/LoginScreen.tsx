@@ -124,7 +124,9 @@ export function LoginScreen({ theme, serverLabel, bottomInset = 0, onSubmit, onC
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  content: { padding: 24, paddingTop: 72, gap: 8 },
+  // Cap the column and centre it so the form doesn't stretch into a long line on an
+  // iPad. The cap is wider than any phone, so phones render exactly as before.
+  content: { padding: 24, paddingTop: 72, gap: 8, width: '100%', maxWidth: 480, alignSelf: 'center' },
   title: { fontSize: 24, fontWeight: '700' },
   subtitle: { fontSize: 14, marginBottom: 12 },
   label: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5, marginTop: 8 },
