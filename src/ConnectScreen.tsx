@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import {
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,8 +12,10 @@ import {
   View,
 } from 'react-native';
 import { normalizeUrl, type ServerEntry } from './api/servers';
+import { parseDeepLink } from './api/deepLink';
 import { colors } from './divkit/theme';
 import { Touchable } from './ui/touchable';
+import { QrScanner } from './QrScanner';
 
 interface Props {
   theme: 'light' | 'dark';
@@ -27,6 +30,7 @@ export function ConnectScreen({ theme, servers, bottomInset = 0, onConnect, onRe
   const c = colors(theme);
   const [draft, setDraft] = useState('');
   const [invalid, setInvalid] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
   function submit() {
     const norm = normalizeUrl(draft);
@@ -39,7 +43,19 @@ export function ConnectScreen({ theme, servers, bottomInset = 0, onConnect, onRe
     onConnect(norm);
   }
 
+  // A scanned QR is either an `onec://connect?url=…` deep link or a plain server
+  // URL. Anything else (a random code) is rejected — normalizeUrl is too lenient
+  // to gate on alone, so a bare string must explicitly look like an http(s) URL.
+  function onScanned(data: string) {
+    setScanning(false);
+    const intent = parseDeepLink(data);
+    const url = intent ? intent.url : /^https?:\/\//i.test(data.trim()) ? normalizeUrl(data) : null;
+    if (url) onConnect(url);
+    else Alert.alert("Not a server QR code", "Scan the QR shown on a OneC server's login page.");
+  }
+
   return (
+    <>
     <ScrollView
       style={[styles.flex, { backgroundColor: c.bg }]}
       contentContainerStyle={[styles.content, { paddingBottom: 24 + bottomInset }]}
@@ -94,6 +110,14 @@ export function ConnectScreen({ theme, servers, bottomInset = 0, onConnect, onRe
           </Text>
         )}
 
+        {/* Scan a server's QR code (encodes onec://connect?url=…) instead of typing. */}
+        <Touchable
+          onPress={() => setScanning(true)}
+          style={[styles.scanBtn, { borderColor: c.fieldBorder, backgroundColor: c.fieldBg }]}
+        >
+          <Text style={[styles.scanBtnText, { color: c.text }]}>⃞  Scan QR code</Text>
+        </Touchable>
+
         {/* Saved servers */}
         {servers.length > 0 && (
           <Text style={[styles.sectionLabel, { color: c.muted }]}>SAVED SERVERS</Text>
@@ -126,6 +150,8 @@ export function ConnectScreen({ theme, servers, bottomInset = 0, onConnect, onRe
           )}
         </View>
     </ScrollView>
+    <QrScanner visible={scanning} onClose={() => setScanning(false)} onScanned={onScanned} />
+    </>
   );
 }
 
@@ -150,6 +176,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   addBtnText: { fontWeight: '600', fontSize: 14 },
+  scanBtn: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanBtnText: { fontWeight: '600', fontSize: 14 },
   fieldError: { fontSize: 13 },
   sectionLabel: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5, marginTop: 12 },
   list: { borderWidth: 1, borderRadius: 12, overflow: 'hidden' },

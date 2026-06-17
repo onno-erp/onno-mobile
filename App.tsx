@@ -21,11 +21,13 @@ import { confirm, ConfirmHost } from './src/ui/dialog';
 import { ContextMenuHost } from './src/ui/contextMenu';
 import {
   getLastServer,
+  labelFor,
   loadServers,
   rememberServer,
   removeServer,
   type ServerEntry,
 } from './src/api/servers';
+import { parseDeepLink } from './src/api/deepLink';
 import { getStoredTheme, setStoredTheme } from './src/api/prefs';
 import { clearCredentials, getCredentials } from './src/api/credentials';
 import { ConnectScreen } from './src/ConnectScreen';
@@ -305,6 +307,38 @@ export default function App() {
     loadServers().then(setServers).catch(() => {});
   }
 
+  // ----- deep links: open the app pointed at a server (issue #5) -----
+  // Route an incoming OS link — the `onec://connect?url=…` custom scheme (covers
+  // any server, e.g. a scanned QR) or a `*.cloud.onno.su` universal link — into
+  // `connectTo`, the single "point the app at a server" entry point.
+  async function handleDeepLink(raw: string | null, th: 'light' | 'dark' = theme) {
+    const intent = parseDeepLink(raw);
+    if (!intent) return;
+    // Security: a minted `onec://connect?url=…` is an attack vector. Auto-connect
+    // only to servers already saved; confirm before creating a client for an
+    // unknown one. Universal links into our cloud are pre-verified by the OS, so
+    // they skip the prompt.
+    if (!intent.trusted) {
+      const known = (await loadServers()).some((s) => s.url === intent.url);
+      if (!known) {
+        setBooting(false); // surface the picker (+ its ConfirmHost) under the dialog
+        const ok = await confirm({
+          title: 'Connect to this server?',
+          message: labelFor(intent.url),
+          confirmLabel: 'Connect',
+          icon: 'server',
+        });
+        if (!ok) return;
+      }
+    }
+    connectTo(intent.url, th);
+  }
+
+  // Latest handler, so the warm `url` listener (subscribed once) always sees the
+  // current theme/state without re-subscribing — same pattern as reloadRef.
+  const handleDeepLinkRef = useRef(handleDeepLink);
+  handleDeepLinkRef.current = handleDeepLink;
+
   // Startup: restore the saved theme, then auto-connect to the last-used server
   // (or open the picker). The restored theme is threaded into connect so the
   // first shell/content fetch is already themed — no light→dark reflow.
@@ -314,10 +348,24 @@ export default function App() {
       if (storedTheme) setTheme(storedTheme);
       const list = await loadServers();
       setServers(list);
+      // A deep link that cold-launched the app wins over the last-used server.
+      const initial = await Linking.getInitialURL();
+      if (parseDeepLink(initial)) {
+        await handleDeepLink(initial, storedTheme ?? theme);
+        return;
+      }
       const last = await getLastServer();
       if (last) connectTo(last, storedTheme ?? theme);
       else setBooting(false);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Warm deep links: the app is already running when the OS hands it a link.
+  // Subscribed once; defers to the ref so it always runs the latest handler.
+  useEffect(() => {
+    const sub = Linking.addEventListener('url', ({ url }) => handleDeepLinkRef.current(url));
+    return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -547,6 +595,8 @@ export default function App() {
             removeServer(url).then(setServers).catch(() => {});
           }}
         />
+        {/* So an unknown-server deep-link confirm can render over the picker. */}
+        <ConfirmHost theme={theme} />
       </View>
     );
   }
@@ -592,6 +642,8 @@ export default function App() {
             onChangeServer={showPicker}
           />
         )}
+        {/* A deep link arriving on the login screen may need the unknown-server confirm. */}
+        <ConfirmHost theme={theme} />
       </View>
     );
   }
