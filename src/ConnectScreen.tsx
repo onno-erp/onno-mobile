@@ -19,11 +19,13 @@ import { colors } from './divkit/theme';
 interface Props {
   theme: 'light' | 'dark';
   servers: ServerEntry[];
+  /** Bottom safe-area inset, so the scroll content clears the home indicator. */
+  bottomInset?: number;
   onConnect: (url: string) => void;
   onRemove: (url: string) => void;
 }
 
-export function ConnectScreen({ theme, servers, onConnect, onRemove }: Props) {
+export function ConnectScreen({ theme, servers, bottomInset = 0, onConnect, onRemove }: Props) {
   const c = colors(theme);
   const [draft, setDraft] = useState('');
   const [invalid, setInvalid] = useState(false);
@@ -45,7 +47,7 @@ export function ConnectScreen({ theme, servers, onConnect, onRemove }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: 24 + bottomInset }]}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={[styles.title, { color: c.text }]}>Connect to a server</Text>

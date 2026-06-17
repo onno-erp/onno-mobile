@@ -28,6 +28,9 @@ function OnecForm({ form, host }: { form: Record<string, any>; host: DivHost }) 
     [meta],
   );
 
+  // Document child collections. The metadata ships them with the form.
+  const tabularSections: Attr[] = useMemo(() => (Array.isArray(meta.tabularSections) ? meta.tabularSections : []), [meta]);
+
   const [values, setValues] = useState<Row>(() => {
     const v: Row = {};
     if (kind === 'catalogs') {
@@ -40,6 +43,30 @@ function OnecForm({ form, host }: { form: Record<string, any>; host: DivHost }) 
     }
     return v;
   });
+  // Rows per section, keyed by attribute fieldName. Loaded rows arrive keyed by column name, so
+  // seed each cell from initial[section][columnName] — the same column→field asymmetry the
+  // top-level fields handle. All attributes are seeded (not just visible) so hidden columns
+  // survive the delete-and-reinsert on save.
+  const [sections, setSections] = useState<Record<string, Row[]>>(() => {
+    const seed: Record<string, Row[]> = {};
+    for (const ts of tabularSections) {
+      const raw = initial[ts.name];
+      const attrs: Attr[] = (ts.attributes as Attr[]) ?? [];
+      seed[ts.name] = Array.isArray(raw)
+        ? (raw as Row[]).map((r) => {
+            const row: Row = {};
+            for (const a of attrs) {
+              if (a.secret === true) continue;
+              const col = a.columnName ?? a.fieldName;
+              if (r[col] != null) row[a.fieldName] = r[col];
+            }
+            return row;
+          })
+        : [];
+    }
+    return seed;
+  });
+
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
@@ -52,6 +79,12 @@ function OnecForm({ form, host }: { form: Record<string, any>; host: DivHost }) 
       return rest;
     });
   };
+
+  const addRow = (section: string) => setSections((p) => ({ ...p, [section]: [...(p[section] ?? []), {}] }));
+  const removeRow = (section: string, idx: number) =>
+    setSections((p) => ({ ...p, [section]: (p[section] ?? []).filter((_, i) => i !== idx) }));
+  const setCell = (section: string, idx: number, key: string, value: unknown) =>
+    setSections((p) => ({ ...p, [section]: (p[section] ?? []).map((row, i) => (i === idx ? { ...row, [key]: value } : row)) }));
 
   function validate(): boolean {
     const errs: Record<string, string> = {};
@@ -79,6 +112,21 @@ function OnecForm({ form, host }: { form: Record<string, any>; host: DivHost }) 
         continue;
       }
       body[field] = values[field];
+    }
+    // Attach each tabular section as rows keyed by fieldName. Drop rows where every attribute is
+    // blank; booleans map to primitive columns, so always send true/false (never null).
+    for (const ts of tabularSections) {
+      const attrs: Attr[] = (ts.attributes as Attr[]) ?? [];
+      body[ts.name] = (sections[ts.name] ?? [])
+        .filter((row) => attrs.some((a) => row[a.fieldName] != null && row[a.fieldName] !== ''))
+        .map((row) => {
+          const out: Row = {};
+          for (const a of attrs) {
+            const v = row[a.fieldName];
+            out[a.fieldName] = a.javaType === 'boolean' || a.javaType === 'Boolean' ? v === true : v ?? null;
+          }
+          return out;
+        });
     }
     if (isEdit && initial._version != null) body._version = initial._version;
     return body;
@@ -108,8 +156,6 @@ function OnecForm({ form, host }: { form: Record<string, any>; host: DivHost }) 
     }
   }
 
-  const hasSections = Array.isArray(meta.tabularSections) && meta.tabularSections.length > 0;
-
   return (
     <ThemeC.Provider value={c}>
       <View>
@@ -130,7 +176,18 @@ function OnecForm({ form, host }: { form: Record<string, any>; host: DivHost }) 
           <FieldControl key={a.fieldName} attr={a} value={values[a.fieldName]} error={errors[a.fieldName]} onChange={(v) => set(a.fieldName, v)} host={host} />
         ))}
 
-        {hasSections && <Text style={{ color: '#92400E', fontSize: 12, marginTop: 8 }}>Tabular sections aren’t rendered yet on mobile.</Text>}
+        {tabularSections.map((ts) => (
+          <SectionEditor
+            key={ts.name}
+            section={ts}
+            rows={sections[ts.name] ?? []}
+            host={host}
+            onAdd={() => addRow(ts.name)}
+            onRemove={(i) => removeRow(ts.name, i)}
+            onCell={(i, key, v) => setCell(ts.name, i, key, v)}
+          />
+        ))}
+
         {notice ? <Text style={{ color: c.dangerFg, fontSize: 12, marginTop: 8 }}>{notice}</Text> : null}
 
         <Pressable style={{ backgroundColor: c.accentBg, borderRadius: 8, paddingVertical: 14, alignItems: 'center', marginTop: 20, opacity: saving ? 0.6 : 1 }} disabled={saving} onPress={submit}>
@@ -141,6 +198,59 @@ function OnecForm({ form, host }: { form: Record<string, any>; host: DivHost }) 
         </Pressable>
       </View>
     </ThemeC.Provider>
+  );
+}
+
+// An editable grid for one tabular section: add/remove rows, each cell rendered by the same
+// FieldControl the top-level fields use. On mobile each row is a stacked card (not a wide
+// spreadsheet line) so ref pickers, enums and dates stay tappable.
+function SectionEditor({
+  section,
+  rows,
+  host,
+  onAdd,
+  onRemove,
+  onCell,
+}: {
+  section: Attr;
+  rows: Row[];
+  host: DivHost;
+  onAdd: () => void;
+  onRemove: (idx: number) => void;
+  onCell: (idx: number, key: string, value: unknown) => void;
+}) {
+  const c = useContext(ThemeC);
+  const columns: Attr[] = ((section.attributes as Attr[]) ?? [])
+    .filter((a) => a.visibleInForm !== false)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const title = (section.label as string) ?? (section.name ? section.name.charAt(0).toUpperCase() + section.name.slice(1) : 'Rows');
+
+  return (
+    <View style={{ marginTop: 16, borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 12, backgroundColor: c.card }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <Text style={{ fontSize: 15, fontWeight: '700', color: c.text }}>{title}</Text>
+        <Pressable onPress={onAdd} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: c.border }}>
+          <Text style={{ color: c.primary, fontWeight: '600', fontSize: 13 }}>+ Add row</Text>
+        </Pressable>
+      </View>
+      {rows.length === 0 ? (
+        <Text style={{ color: c.muted, fontSize: 13 }}>No rows yet.</Text>
+      ) : (
+        rows.map((row, idx) => (
+          <View key={idx} style={{ backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: 10, padding: 10, marginTop: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: c.muted }}>{`Row ${idx + 1}`}</Text>
+              <Pressable onPress={() => onRemove(idx)} hitSlop={6}>
+                <Text style={{ color: c.dangerFg, fontSize: 13, fontWeight: '600' }}>Remove</Text>
+              </Pressable>
+            </View>
+            {columns.map((a) => (
+              <FieldControl key={a.fieldName} attr={a} value={row[a.fieldName]} onChange={(v) => onCell(idx, a.fieldName, v)} host={host} />
+            ))}
+          </View>
+        ))
+      )}
+    </View>
   );
 }
 
