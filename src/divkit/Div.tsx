@@ -1,10 +1,10 @@
-// The recursive renderer: one DivKit block → native RN components. This is the
-// piece the Svelte web SDK does against the DOM; here it targets React Native's
-// View / Text / Image / ScrollView. Expressions and templates are already
-// resolved by the caller chain (templates up front, expressions per-prop here).
+// The recursive renderer: one DivKit block → native RN components. Targets RN's
+// View / Text / Image / ScrollView. Templates are resolved up front; @{…}
+// expressions in this node's own props are resolved here against the variables.
 
 import React from 'react';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 import { resolve, resolveString, type Variables } from './expr';
 import { CustomPlaceholder, getCustom } from './registry';
 import { boxStyle, color, containerStyle, textStyle } from './style';
@@ -17,51 +17,64 @@ interface Ctx {
 
 export function Div({ block: rawBlock, ctx }: { block: DivBlock; ctx: Ctx }): React.ReactElement | null {
   if (!rawBlock || typeof rawBlock !== 'object') return null;
-  // Resolve @{…} expressions in this node's own props (colors, text, sizes,
-  // action urls) against the current variables. Children resolve themselves, and
-  // custom_props are left to the custom renderer.
+  // Resolve @{…} in this node's own props (colors, text, sizes, action urls).
+  // Children resolve themselves; custom_props are left to the custom renderer.
   const block = resolveProps(rawBlock, ctx.vars) as DivBlock;
   if (block.visibility === 'gone') return null;
-  const invisible = block.visibility === 'invisible';
-  const baseStyle = [boxStyle(block), invisible ? { opacity: 0 } : null];
 
-  let node: React.ReactElement | null;
+  const invisible = block.visibility === 'invisible';
+  const baseStyle: StyleProp<ViewStyle> = [boxStyle(block), invisible ? { opacity: 0 } : null];
+
+  // A single onPress, applied to the element that IS the layout box (so a
+  // tappable container keeps its flexGrow/weight instead of being wrapped in a
+  // content-sized Pressable).
+  const actions: DivAction[] = block.actions ?? (block.action ? [block.action] : []);
+  const onPress = actions.length
+    ? () => {
+        for (const a of actions) {
+          const url = resolveString(a.url, ctx.vars);
+          if (url) ctx.host.fire(url);
+        }
+      }
+    : undefined;
+
   switch (block.type) {
-    case 'text':
-      node = (
-        <Text
-          style={[textStyle(block), boxStyle(block)]}
-          numberOfLines={block.max_lines}
-        >
+    case 'text': {
+      const node = (
+        <Text style={[textStyle(block), boxStyle(block)]} numberOfLines={block.max_lines}>
           {resolveString(block.text, ctx.vars)}
         </Text>
       );
-      break;
+      return onPress ? (
+        <Pressable onPress={onPress} style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}>
+          {node}
+        </Pressable>
+      ) : (
+        node
+      );
+    }
 
     case 'image': {
       const uri = absolutize(resolveString(block.image_url, ctx.vars), ctx.host.baseUrl);
-      node = <Image source={{ uri }} style={[{ width: 40, height: 40 }, baseStyle] as any} resizeMode="cover" />;
-      break;
+      const img = <Image source={{ uri }} style={[{ width: 40, height: 40 }, baseStyle] as any} resizeMode="cover" />;
+      return onPress ? <Pressable onPress={onPress}>{img}</Pressable> : img;
     }
 
     case 'separator': {
       const horizontal = block.delimiter_style?.orientation !== 'vertical';
-      node = (
+      return (
         <View
           style={[
-            horizontal
-              ? { height: 1, alignSelf: 'stretch' }
-              : { width: 1, alignSelf: 'stretch' },
+            horizontal ? { height: 1, alignSelf: 'stretch' } : { width: 1, alignSelf: 'stretch' },
             { backgroundColor: color(block.delimiter_style?.color) ?? '#E5E7EB' },
             boxStyle(block),
           ]}
         />
       );
-      break;
     }
 
     case 'gallery':
-      node = (
+      return (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -73,28 +86,24 @@ export function Div({ block: rawBlock, ctx }: { block: DivBlock; ctx: Ctx }): Re
           ))}
         </ScrollView>
       );
-      break;
 
     case 'grid': {
       const cols = block.column_count ?? 2;
-      node = (
-        <View style={[{ flexDirection: 'row', flexWrap: 'wrap' }, baseStyle]}>
+      return (
+        <Box style={[{ flexDirection: 'row', flexWrap: 'wrap' }, baseStyle]} onPress={onPress}>
           {(block.items ?? []).map((c, i) => (
             <View key={i} style={{ width: `${100 / cols}%` }}>
               <Div block={c} ctx={ctx} />
             </View>
           ))}
-        </View>
+        </Box>
       );
-      break;
     }
 
     case 'state': {
-      // Minimal: render the first state's div (state switching is variable-driven
-      // and not used on the mobile surfaces yet).
       const states = (block.states as Array<{ div: DivBlock }>) ?? [];
-      node = states.length ? <Div block={states[0].div} ctx={ctx} /> : null;
-      break;
+      const inner = states.length ? <Div block={states[0].div} ctx={ctx} /> : null;
+      return onPress ? <Box style={baseStyle} onPress={onPress}>{inner}</Box> : inner;
     }
 
     case 'custom': {
@@ -103,44 +112,36 @@ export function Div({ block: rawBlock, ctx }: { block: DivBlock; ctx: Ctx }): Re
       const inner = renderer
         ? renderer({ block, customProps: block.custom_props ?? {}, host: ctx.host })
         : <CustomPlaceholder type={type} />;
-      node = <View style={baseStyle}>{inner}</View>;
-      break;
+      return <Box style={baseStyle} onPress={onPress}>{inner}</Box>;
     }
 
     case 'container':
     default:
-      node = (
-        <View style={[containerStyle(block), baseStyle]}>
+      return (
+        <Box style={[containerStyle(block), baseStyle]} onPress={onPress}>
           {(block.items ?? []).map((c, i) => (
             <Div key={i} block={c} ctx={ctx} />
           ))}
-        </View>
+        </Box>
       );
-      break;
   }
-
-  return wrapActions(node, block, ctx);
 }
 
-function wrapActions(
-  node: React.ReactElement | null,
-  block: DivBlock,
-  ctx: Ctx,
-): React.ReactElement | null {
-  if (!node) return null;
-  const actions: DivAction[] = block.actions ?? (block.action ? [block.action] : []);
-  if (actions.length === 0) return node;
+/** A layout box that becomes a Pressable (carrying the same style → same flex)
+ *  when given an onPress, else a plain View. */
+function Box({
+  style,
+  onPress,
+  children,
+}: {
+  style: StyleProp<ViewStyle>;
+  onPress?: () => void;
+  children: React.ReactNode;
+}) {
+  if (!onPress) return <View style={style}>{children}</View>;
   return (
-    <Pressable
-      onPress={() => {
-        for (const a of actions) {
-          const url = resolveString(a.url, ctx.vars);
-          if (url) ctx.host.fire(url);
-        }
-      }}
-      style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
-    >
-      {node}
+    <Pressable onPress={onPress} style={({ pressed }) => [style, pressed ? { opacity: 0.6 } : null]}>
+      {children}
     </Pressable>
   );
 }
@@ -166,5 +167,4 @@ function absolutize(url: string, baseUrl?: string): string {
   return baseUrl.replace(/\/$/, '') + (url.startsWith('/') ? url : `/${url}`);
 }
 
-// re-export for convenience
 export { resolve };

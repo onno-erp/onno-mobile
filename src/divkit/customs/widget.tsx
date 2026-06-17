@@ -5,7 +5,7 @@
 // a card (no chart graphics yet) rather than a raw placeholder.
 
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import type { Row } from '../../api/onecClient';
 import {
   formatAmount,
@@ -17,14 +17,12 @@ import {
   splitFields,
   toNumber,
 } from '../format';
+import { colors, type ThemeColors } from '../theme';
 import type { CustomRenderer, DivHost } from '../types';
 import { aggregate, WidgetMeta } from '../widgetData';
 
 function useRows(host: DivHost, meta: WidgetMeta) {
-  const [state, setState] = useState<{ rows: Row[] | null; error: string | null }>({
-    rows: null,
-    error: null,
-  });
+  const [state, setState] = useState<{ rows: Row[] | null; error: string | null }>({ rows: null, error: null });
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -49,10 +47,10 @@ function useRows(host: DivHost, meta: WidgetMeta) {
   return state;
 }
 
-function Card({ meta, children }: { meta: WidgetMeta; children: React.ReactNode }) {
+function Card({ meta, c, children }: { meta: WidgetMeta; c: ThemeColors; children: React.ReactNode }) {
   return (
-    <View style={s.card}>
-      <Text style={s.title} numberOfLines={1}>
+    <View style={{ backgroundColor: c.card, borderRadius: 12, borderWidth: 1, borderColor: c.border, padding: 14, marginVertical: 6 }}>
+      <Text style={{ fontSize: 15, fontWeight: '600', color: c.text }} numberOfLines={1}>
         {meta.title}
       </Text>
       <View style={{ marginTop: 8 }}>{children}</View>
@@ -60,115 +58,116 @@ function Card({ meta, children }: { meta: WidgetMeta; children: React.ReactNode 
   );
 }
 
-const Loading = () => (
+const Loading = ({ c }: { c: ThemeColors }) => (
   <View style={{ height: 64, alignItems: 'center', justifyContent: 'center' }}>
-    <ActivityIndicator />
+    <ActivityIndicator color={c.text} />
   </View>
 );
-const Empty = ({ text = 'No data yet.' }: { text?: string }) => <Text style={s.muted}>{text}</Text>;
+const Empty = ({ c, text = 'No data yet.' }: { c: ThemeColors; text?: string }) => (
+  <Text style={{ color: c.muted, fontSize: 12 }}>{text}</Text>
+);
 
 const ListWidget: CustomRenderer = ({ customProps, host }) => {
+  const c = colors(host.theme);
   const meta = new WidgetMeta((customProps.widget as Record<string, any>) ?? {});
   const { rows, error } = useRows(host, meta);
   const dateField = meta.cfg('dateField', '_date');
 
   let body: React.ReactNode;
-  if (error) body = <Empty text="No records yet." />;
-  else if (!rows) body = <Loading />;
+  if (error) body = <Empty c={c} text="No records yet." />;
+  else if (!rows) body = <Loading c={c} />;
   else {
-    const sorted = [...rows].sort((a, b) =>
-      String(b[dateField] ?? '').localeCompare(String(a[dateField] ?? '')),
-    );
+    const sorted = [...rows].sort((a, b) => String(b[dateField] ?? '').localeCompare(String(a[dateField] ?? '')));
     const items = sorted.slice(0, meta.maxItems);
-    body = items.length === 0 ? (
-      <Empty text="No records yet." />
-    ) : (
-      <View>
-        {items.map((row, i) => {
-          const headline = resolveText(row, {
-            template: meta.cfg('titleTemplate') || undefined,
-            fields: splitFields(meta.cfg('titleField')),
-            fallbacks: ['_number', '_code', '_description', 'name'],
-          });
-          const secondaryFields = splitFields(meta.cfg('secondaryField'));
-          const secondary = pickField(
-            row,
-            secondaryFields.length
-              ? secondaryFields
-              : ['client_display', 'primary_client_display', 'property_display', 'customer_display'],
-          );
-          const amountFields = splitFields(meta.cfg('amountField'));
-          const amountRaw = pickField(row, amountFields.length ? amountFields : ['total', 'total_gross', 'amount', '_sum']);
-          const amount = amountRaw != null ? toNumber(amountRaw) : null;
-          const currency = resolveCurrency(row, meta.cfg('currencyField'), meta.cfg('currency'));
-          const dateStr = row[dateField] != null ? String(row[dateField]) : null;
-          return (
-            <Pressable
-              key={i}
-              style={s.row}
-              onPress={() => {
-                if (row._id != null) host.fire(`onec://${meta.kind}/${meta.entityName}/${row._id}`);
-              }}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={s.rowTitle} numberOfLines={1}>
-                  {headline || '—'}
-                </Text>
-                {secondary ? (
-                  <Text style={s.muted} numberOfLines={1}>
-                    {secondary}
+    body =
+      items.length === 0 ? (
+        <Empty c={c} text="No records yet." />
+      ) : (
+        <View>
+          {items.map((row, i) => {
+            const headline = resolveText(row, {
+              template: meta.cfg('titleTemplate') || undefined,
+              fields: splitFields(meta.cfg('titleField')),
+              fallbacks: ['_number', '_code', '_description', 'name'],
+            });
+            const secondaryFields = splitFields(meta.cfg('secondaryField'));
+            const secondary = pickField(
+              row,
+              secondaryFields.length ? secondaryFields : ['client_display', 'primary_client_display', 'property_display', 'customer_display'],
+            );
+            const amountFields = splitFields(meta.cfg('amountField'));
+            const amountRaw = pickField(row, amountFields.length ? amountFields : ['total', 'total_gross', 'amount', '_sum']);
+            const amount = amountRaw != null ? toNumber(amountRaw) : null;
+            const currency = resolveCurrency(row, meta.cfg('currencyField'), meta.cfg('currency'));
+            const dateStr = row[dateField] != null ? String(row[dateField]) : null;
+            return (
+              <Pressable
+                key={i}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 8 }}
+                onPress={() => {
+                  if (row._id != null) host.fire(`onec://${meta.kind}/${meta.entityName}/${row._id}`);
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '600', color: c.text, fontSize: 14 }} numberOfLines={1}>
+                    {headline || '—'}
                   </Text>
-                ) : null}
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                {amount != null ? <Text style={s.amount}>{formatAmount(amount, { currency: currency ?? undefined })}</Text> : null}
-                {dateStr ? <Text style={s.muted}>{formatMonthDay(dateStr) ?? ''}</Text> : null}
-              </View>
-            </Pressable>
-          );
-        })}
-      </View>
-    );
+                  {secondary ? (
+                    <Text style={{ color: c.muted, fontSize: 12 }} numberOfLines={1}>
+                      {secondary}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  {amount != null ? <Text style={{ fontWeight: '500', color: c.text, fontSize: 13 }}>{formatAmount(amount, { currency: currency ?? undefined })}</Text> : null}
+                  {dateStr ? <Text style={{ color: c.muted, fontSize: 12 }}>{formatMonthDay(dateStr) ?? ''}</Text> : null}
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      );
   }
-  return <Card meta={meta}>{body}</Card>;
+  return <Card meta={meta} c={c}>{body}</Card>;
 };
 
 const StatWidget: CustomRenderer = ({ customProps, host }) => {
+  const c = colors(host.theme);
   const meta = new WidgetMeta((customProps.widget as Record<string, any>) ?? {});
   const { rows, error } = useRows(host, meta);
   const metric = meta.cfg('metric', 'count');
   let body: React.ReactNode;
-  if (error) body = <Empty />;
-  else if (!rows) body = <Loading />;
+  if (error) body = <Empty c={c} />;
+  else if (!rows) body = <Loading c={c} />;
   else {
     const value = aggregate(rows, metric, meta.cfg('metricField') || undefined);
     body = (
-      <Text style={s.headline}>
+      <Text style={{ fontSize: 28, fontWeight: '700', color: c.text }}>
         {formatCompact(value, { currency: meta.cfg('currency') || undefined, format: metric === 'count' ? 'integer' : undefined })}
       </Text>
     );
   }
-  return <Card meta={meta}>{body}</Card>;
+  return <Card meta={meta} c={c}>{body}</Card>;
 };
 
-// sparkline/gauge/chart/kanban/calendar: headline aggregate in a card for now.
 const AggregateCard: CustomRenderer = ({ customProps, host }) => {
+  const c = colors(host.theme);
   const meta = new WidgetMeta((customProps.widget as Record<string, any>) ?? {});
   const { rows, error } = useRows(host, meta);
   const metric = meta.cfg('metric', 'count');
   let body: React.ReactNode;
-  if (error) body = <Empty />;
-  else if (!rows) body = <Loading />;
+  if (error) body = <Empty c={c} />;
+  else if (!rows) body = <Loading c={c} />;
   else {
     const value = aggregate(rows, metric, meta.cfg('metricField') || undefined);
     body = (
       <View>
-        <Text style={s.headline}>{formatCompact(value, { format: metric === 'count' ? 'integer' : undefined })}</Text>
-        <Text style={s.muted}>{meta.widgetType} · chart view pending</Text>
+        <Text style={{ fontSize: 28, fontWeight: '700', color: c.text }}>{formatCompact(value, { format: metric === 'count' ? 'integer' : undefined })}</Text>
+        <Text style={{ color: c.muted, fontSize: 12 }}>{meta.widgetType} · chart view pending</Text>
       </View>
     );
   }
-  return <Card meta={meta}>{body}</Card>;
+  return <Card meta={meta} c={c}>{body}</Card>;
 };
 
 export const onecWidget: CustomRenderer = (p) => {
@@ -183,31 +182,9 @@ export const onecWidget: CustomRenderer = (p) => {
     case 'calendar': return <AggregateCard {...p} />;
     default:
       return (
-        <Card meta={meta}>
-          <Empty text={`No renderer for "${meta.widgetType}".`} />
+        <Card meta={meta} c={colors(p.host.theme)}>
+          <Empty c={colors(p.host.theme)} text={`No renderer for "${meta.widgetType}".`} />
         </Card>
       );
   }
 };
-
-const s = StyleSheet.create({
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 14,
-    marginVertical: 6,
-  },
-  title: { fontSize: 15, fontWeight: '600', color: '#0A0A0A' },
-  muted: { color: '#737373', fontSize: 12 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    gap: 8,
-  },
-  rowTitle: { fontWeight: '600', color: '#0A0A0A', fontSize: 14 },
-  amount: { fontWeight: '500', color: '#0A0A0A', fontSize: 13 },
-  headline: { fontSize: 28, fontWeight: '700', color: '#0A0A0A' },
-});

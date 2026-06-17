@@ -14,6 +14,7 @@ import { ONEC_BASE_URL } from './src/api/config';
 import { OnecClient } from './src/api/onecClient';
 import { DivCard } from './src/divkit';
 import type { DivCardEnvelope } from './src/divkit';
+import { colors } from './src/divkit/theme';
 
 type Status = 'connecting' | 'ready' | 'error';
 type Shell = Awaited<ReturnType<OnecClient['shell']>>;
@@ -31,20 +32,20 @@ export default function App() {
   const [status, setStatus] = useState<Status>('connecting');
   const [error, setError] = useState('');
 
-  async function loadShell() {
+  async function loadShell(th: 'light' | 'dark' = theme) {
     try {
-      setShell(await client.shell({ viewport: VIEWPORT, theme, profile }));
+      setShell(await client.shell({ viewport: VIEWPORT, theme: th, profile }));
     } catch {
       /* nav is non-fatal; content still shows */
     }
   }
 
-  async function loadContent(path: string) {
+  async function loadContent(path: string, th: 'light' | 'dark' = theme) {
     setStatus('connecting');
     setError('');
     setRoute(path);
     try {
-      const env = (await client.content(path, { viewport: VIEWPORT, theme, profile })) as DivCardEnvelope;
+      const env = (await client.content(path, { viewport: VIEWPORT, theme: th, profile })) as DivCardEnvelope;
       setContent(env);
       setStatus('ready');
     } catch (e: any) {
@@ -82,11 +83,9 @@ export default function App() {
     if (rest === 'theme/toggle') {
       const next = theme === 'light' ? 'dark' : 'light';
       setTheme(next);
-      // reload with the new theme
-      setTimeout(() => {
-        loadShell();
-        loadContent(route);
-      }, 0);
+      // refetch with the new theme explicitly (state update hasn't applied yet)
+      loadShell(next);
+      loadContent(route, next);
       return;
     }
     if (rest.startsWith('app')) {
@@ -127,27 +126,33 @@ export default function App() {
 
   const navVars = { active_path: route };
   const hasBottomBar = shell?.navStyle === 'bottom_bar' && !!shell?.nav;
+  const c = colors(theme);
+
+  // The server pads some content roots (e.g. the dashboard) itself; for routes
+  // that don't (lists), the host supplies the standard 16px padding.
+  const rootPadded = !!(content as any)?.card?.states?.[0]?.div?.paddings;
+  const pad = rootPadded ? 0 : 16;
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView style={[styles.screen, { backgroundColor: c.bg }]}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
 
       <View style={{ flex: 1 }}>
         {status === 'connecting' && !content ? (
           <View style={styles.center}>
-            <ActivityIndicator />
-            <Text style={styles.muted}>Connecting to {ONEC_BASE_URL.replace(/^https?:\/\//, '')}…</Text>
+            <ActivityIndicator color={c.text} />
+            <Text style={[styles.muted, { color: c.muted }]}>Connecting to {ONEC_BASE_URL.replace(/^https?:\/\//, '')}…</Text>
           </View>
         ) : status === 'error' ? (
           <View style={styles.center}>
             <Text style={styles.errTitle}>Couldn’t reach the server</Text>
-            <Text style={styles.muted}>{error}</Text>
-            <Pressable style={styles.btn} onPress={() => loadContent(route)}>
-              <Text style={styles.btnText}>Retry</Text>
+            <Text style={[styles.muted, { color: c.muted }]}>{error}</Text>
+            <Pressable style={[styles.btn, { backgroundColor: c.accentBg }]} onPress={() => loadContent(route)}>
+              <Text style={[styles.btnText, { color: c.accentFg }]}>Retry</Text>
             </Pressable>
           </View>
         ) : content ? (
-          <ScrollView contentContainerStyle={{ paddingBottom: hasBottomBar ? NAV_RESERVE : 0 }}>
+          <ScrollView contentContainerStyle={{ paddingHorizontal: pad, paddingTop: pad, paddingBottom: pad + (hasBottomBar ? NAV_RESERVE : 0) }}>
             <DivCard
               key={route}
               envelope={content}

@@ -4,18 +4,10 @@
 // table. Row tap opens onec://{kind}/{name}/{id}. Port of onec_list.dart.
 
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import type { Row } from '../../api/onecClient';
 import { applyFormat, isAvatarWidget, isImageWidget, looksLikeImageUrl } from '../format';
+import { colors, type ThemeColors } from '../theme';
 import type { CustomRenderer, DivHost } from '../types';
 import { LucideIcon } from './lucide';
 
@@ -49,6 +41,7 @@ function cellText(row: Row, col: Col): string {
 }
 
 function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) {
+  const c = colors(host.theme);
   const kind = (desc.kind as string) ?? 'catalogs';
   const name = (desc.name as string) ?? '';
   const pageSize = Number(desc.pageSize ?? 100);
@@ -110,68 +103,61 @@ function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) 
     load(true, query, nextCol, nextDesc);
   }
 
-  const widths = columns.map((c, i) => colWidth(c, i === 0));
+  const widths = columns.map((col, i) => colWidth(col, i === 0));
   const tableWidth = widths.reduce((a, b) => a + b, 0) + 24;
   const title = (desc.title as string) ?? name;
 
   return (
     <View>
-      <Text style={s.h1}>{title}</Text>
-      {!loading && <Text style={s.muted}>{total} {total === 1 ? 'row' : 'rows'}</Text>}
+      <Text style={{ fontSize: 22, fontWeight: '700', color: c.text }}>{title}</Text>
+      {!loading && <Text style={{ color: c.muted, fontSize: 13 }}>{total} {total === 1 ? 'row' : 'rows'}</Text>}
 
       {searchable && (
-        <View style={s.searchRow}>
-          <View style={s.search}>
-            <LucideIcon name="search" size={16} color="#9CA3AF" />
-            <TextInput
-              placeholder="Search…"
-              placeholderTextColor="#9CA3AF"
-              style={s.searchInput}
-              onChangeText={onQuery}
-            />
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: c.fieldBorder, borderRadius: 8, paddingHorizontal: 10, height: 40, backgroundColor: c.fieldBg }}>
+            <LucideIcon name="search" size={16} color={c.muted} />
+            <TextInput placeholder="Search…" placeholderTextColor={c.muted} style={{ flex: 1, fontSize: 14, color: c.text, paddingVertical: 0 }} onChangeText={onQuery} />
           </View>
           {newUrl && (
-            <Pressable style={s.addBtn} onPress={() => host.fire(newUrl)}>
-              <LucideIcon name="plus" size={20} color="#FFFFFF" />
+            <Pressable style={{ width: 44, height: 40, borderRadius: 8, backgroundColor: c.accentBg, alignItems: 'center', justifyContent: 'center' }} onPress={() => host.fire(newUrl)}>
+              <LucideIcon name="plus" size={20} color={c.accentFg} />
             </Pressable>
           )}
         </View>
       )}
 
       {loading ? (
-        <View style={s.center}><ActivityIndicator /></View>
+        <View style={{ alignItems: 'center', paddingVertical: 32 }}><ActivityIndicator color={c.text} /></View>
       ) : error ? (
-        <View style={s.center}>
-          <Text style={s.muted}>Failed to load: {error}</Text>
-          <Pressable style={s.retry} onPress={() => load(true)}><Text style={s.retryText}>Retry</Text></Pressable>
+        <View style={{ alignItems: 'center', paddingVertical: 32, gap: 10 }}>
+          <Text style={{ color: c.muted, fontSize: 13 }}>Failed to load: {error}</Text>
+          <Pressable style={{ backgroundColor: c.accentBg, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 }} onPress={() => load(true)}>
+            <Text style={{ color: c.accentFg, fontWeight: '600', fontSize: 13 }}>Retry</Text>
+          </Pressable>
         </View>
       ) : rows.length === 0 ? (
-        <View style={s.center}><Text style={s.muted}>{query ? 'No matches.' : 'No records.'}</Text></View>
+        <View style={{ alignItems: 'center', paddingVertical: 32 }}><Text style={{ color: c.muted, fontSize: 13 }}>{query ? 'No matches.' : 'No records.'}</Text></View>
       ) : (
         <>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.tableWrap}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 12, borderWidth: 1, borderColor: c.border, borderRadius: 10 }}>
             <View style={{ width: tableWidth }}>
-              <View style={s.headerRow}>
-                {columns.map((c, i) => (
-                  <Pressable key={i} style={{ width: widths[i], flexDirection: 'row', alignItems: 'center' }} onPress={() => toggleSort(c.columnName)}>
-                    <Text style={s.headerCell} numberOfLines={1}>{c.label ?? c.columnName}</Text>
-                    <LucideIcon
-                      name={sortColumn !== c.columnName ? 'chevrons-up-down' : sortDesc ? 'arrow-down' : 'arrow-up'}
-                      size={13}
-                      color="#9CA3AF"
-                    />
+              <View style={{ flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: c.border }}>
+                {columns.map((col, i) => (
+                  <Pressable key={i} style={{ width: widths[i], flexDirection: 'row', alignItems: 'center' }} onPress={() => toggleSort(col.columnName)}>
+                    <Text style={{ fontSize: 12, color: c.muted, fontWeight: '500', flexShrink: 1 }} numberOfLines={1}>{col.label ?? col.columnName}</Text>
+                    <LucideIcon name={sortColumn !== col.columnName ? 'chevrons-up-down' : sortDesc ? 'arrow-down' : 'arrow-up'} size={13} color={c.muted} />
                   </Pressable>
                 ))}
               </View>
               {rows.map((row, r) => (
                 <Pressable
                   key={r}
-                  style={[s.dataRow, r < rows.length - 1 && s.rowDivider]}
+                  style={{ flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: r < rows.length - 1 ? 1 : 0, borderBottomColor: c.border }}
                   onPress={() => { if (row._id != null) host.fire(`onec://${kind}/${name}/${row._id}`); }}
                 >
-                  {columns.map((c, i) => (
+                  {columns.map((col, i) => (
                     <View key={i} style={{ width: widths[i], paddingRight: 12 }}>
-                      <Cell row={row} col={c} first={i === 0} baseUrl={host.baseUrl} />
+                      <Cell row={row} col={col} first={i === 0} c={c} baseUrl={host.baseUrl} />
                     </View>
                   ))}
                 </Pressable>
@@ -179,12 +165,12 @@ function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) 
             </View>
           </ScrollView>
           {rows.length < total && (
-            <View style={s.center}>
+            <View style={{ alignItems: 'center', paddingVertical: 16 }}>
               {loadingMore ? (
-                <ActivityIndicator />
+                <ActivityIndicator color={c.text} />
               ) : (
-                <Pressable style={s.retry} onPress={() => load(false)}>
-                  <Text style={s.retryText}>Load more ({total - rows.length})</Text>
+                <Pressable style={{ backgroundColor: c.accentBg, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 }} onPress={() => load(false)}>
+                  <Text style={{ color: c.accentFg, fontWeight: '600', fontSize: 13 }}>Load more ({total - rows.length})</Text>
                 </Pressable>
               )}
             </View>
@@ -195,14 +181,12 @@ function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) 
   );
 }
 
-function Cell({ row, col, first, baseUrl }: { row: Row; col: Col; first: boolean; baseUrl?: string }) {
+function Cell({ row, col, first, c, baseUrl }: { row: Row; col: Col; first: boolean; c: ThemeColors; baseUrl?: string }) {
   if (col.columnName === '_posted') {
     const posted = row._posted === true;
     return (
-      <View style={[s.badge, { backgroundColor: posted ? '#DCFCE7' : '#F3F4F6' }]}>
-        <Text style={{ fontSize: 11, fontWeight: '500', color: posted ? '#16A34A' : '#737373' }}>
-          {posted ? 'Posted' : 'Draft'}
-        </Text>
+      <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, alignSelf: 'flex-start', backgroundColor: posted ? c.successBg : c.surface }}>
+        <Text style={{ fontSize: 11, fontWeight: '500', color: posted ? c.successFg : c.muted }}>{posted ? 'Posted' : 'Draft'}</Text>
       </View>
     );
   }
@@ -216,10 +200,7 @@ function Cell({ row, col, first, baseUrl }: { row: Row; col: Col; first: boolean
   }
   const isRef = Object.prototype.hasOwnProperty.call(row, `${col.columnName}_ref`);
   return (
-    <Text
-      numberOfLines={1}
-      style={{ fontSize: 14, color: isRef ? '#2563EB' : first ? '#0A0A0A' : '#737373', fontWeight: first ? '500' : '400' }}
-    >
+    <Text numberOfLines={1} style={{ fontSize: 14, color: isRef ? c.primary : first ? c.text : c.muted, fontWeight: first ? '500' : '400' }}>
       {cellText(row, col)}
     </Text>
   );
@@ -229,24 +210,3 @@ export const onecList: CustomRenderer = ({ block, host }) => {
   const desc = (block.custom_props?.list as Record<string, any>) ?? {};
   return <OnecList desc={desc} host={host} />;
 };
-
-const s = StyleSheet.create({
-  h1: { fontSize: 22, fontWeight: '700', color: '#0A0A0A' },
-  muted: { color: '#737373', fontSize: 13 },
-  searchRow: { flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' },
-  search: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6,
-    borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, paddingHorizontal: 10, height: 40,
-  },
-  searchInput: { flex: 1, fontSize: 14, color: '#0A0A0A', paddingVertical: 0 },
-  addBtn: { width: 44, height: 40, borderRadius: 8, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center' },
-  center: { alignItems: 'center', justifyContent: 'center', paddingVertical: 32, gap: 10 },
-  tableWrap: { marginTop: 12, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10 },
-  headerRow: { flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
-  headerCell: { fontSize: 12, color: '#737373', fontWeight: '500', flexShrink: 1 },
-  dataRow: { flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 12 },
-  rowDivider: { borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, alignSelf: 'flex-start' },
-  retry: { backgroundColor: '#111827', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
-  retryText: { color: '#FFFFFF', fontWeight: '600', fontSize: 13 },
-});

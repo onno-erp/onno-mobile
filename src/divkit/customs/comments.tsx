@@ -2,12 +2,14 @@
 // { kind, name, id }; the widget loads/posts from /api/comments/... Port of
 // onec_comments.dart.
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import type { Row } from '../../api/onecClient';
 import { formatMonthDay, pickField } from '../format';
+import { colors } from '../theme';
 import type { CustomRenderer, DivHost } from '../types';
 
 function Comments({ target, host }: { target: Record<string, any>; host: DivHost }) {
+  const c = colors(host.theme);
   const kind = (target.kind as string) ?? '';
   const name = (target.name as string) ?? '';
   const id = (target.id as string) ?? '';
@@ -36,7 +38,7 @@ function Comments({ target, host }: { target: Record<string, any>; host: DivHost
       setText('');
       await load();
     } catch {
-      /* ignore; keep text */
+      /* keep text */
     } finally {
       setPosting(false);
     }
@@ -44,37 +46,41 @@ function Comments({ target, host }: { target: Record<string, any>; host: DivHost
 
   return (
     <View>
-      <Text style={s.title}>Comments</Text>
-      <View style={s.composer}>
+      <Text style={{ fontSize: 16, fontWeight: '700', color: c.text, marginBottom: 10 }}>Comments</Text>
+      <View style={{ gap: 8, marginBottom: 14 }}>
         <TextInput
-          style={s.input}
+          style={{ borderWidth: 1, borderColor: c.fieldBorder, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: c.text, minHeight: 44, backgroundColor: c.fieldBg }}
           value={text}
           onChangeText={setText}
           placeholder="Add a comment…"
-          placeholderTextColor="#9CA3AF"
+          placeholderTextColor={c.muted}
           multiline
         />
-        <Pressable style={[s.send, (!text.trim() || posting) && { opacity: 0.5 }]} disabled={!text.trim() || posting} onPress={send}>
-          {posting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={s.sendText}>Post</Text>}
+        <Pressable
+          style={{ backgroundColor: c.accentBg, borderRadius: 8, paddingVertical: 10, alignItems: 'center', alignSelf: 'flex-start', paddingHorizontal: 20, opacity: !text.trim() || posting ? 0.5 : 1 }}
+          disabled={!text.trim() || posting}
+          onPress={send}
+        >
+          {posting ? <ActivityIndicator color={c.accentFg} size="small" /> : <Text style={{ color: c.accentFg, fontWeight: '600' }}>Post</Text>}
         </Pressable>
       </View>
 
       {comments == null ? (
-        <ActivityIndicator style={{ marginVertical: 16 }} />
+        <ActivityIndicator style={{ marginVertical: 16 }} color={c.text} />
       ) : comments.length === 0 ? (
-        <Text style={s.muted}>No comments yet.</Text>
+        <Text style={{ color: c.muted, fontSize: 12 }}>No comments yet.</Text>
       ) : (
-        comments.map((c, i) => {
-          const author = pickField(c, ['author_display', 'author', 'createdBy', 'user']) ?? '—';
-          const dateStr = String(c._date ?? c.createdAt ?? c.created_at ?? '');
-          const body = String(c.body ?? c.text ?? '');
+        comments.map((cm, i) => {
+          const author = pickField(cm, ['author_display', 'author', 'createdBy', 'user']) ?? '—';
+          const dateStr = String(cm._date ?? cm.createdAt ?? cm.created_at ?? '');
+          const body = String(cm.body ?? cm.text ?? '');
           return (
-            <View key={c._id ?? i} style={s.comment}>
-              <View style={s.commentHead}>
-                <Text style={s.author}>{author}</Text>
-                {dateStr ? <Text style={s.muted}>{formatMonthDay(dateStr) ?? ''}</Text> : null}
+            <View key={cm._id ?? i} style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.border }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                <Text style={{ fontWeight: '600', color: c.text, fontSize: 13 }}>{author}</Text>
+                {dateStr ? <Text style={{ color: c.muted, fontSize: 12 }}>{formatMonthDay(dateStr) ?? ''}</Text> : null}
               </View>
-              <Text style={s.body}>{body}</Text>
+              <Text style={{ color: c.text, fontSize: 14 }}>{body}</Text>
             </View>
           );
         })
@@ -87,19 +93,3 @@ export const onecComments: CustomRenderer = ({ block, host }) => {
   const target = (block.custom_props?.target as Record<string, any>) ?? {};
   return <Comments target={target} host={host} />;
 };
-
-const s = StyleSheet.create({
-  title: { fontSize: 16, fontWeight: '700', color: '#0A0A0A', marginBottom: 10 },
-  composer: { gap: 8, marginBottom: 14 },
-  input: {
-    borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10,
-    fontSize: 14, color: '#0A0A0A', minHeight: 44, backgroundColor: '#FFFFFF',
-  },
-  send: { backgroundColor: '#111827', borderRadius: 8, paddingVertical: 10, alignItems: 'center', alignSelf: 'flex-start', paddingHorizontal: 20 },
-  sendText: { color: '#FFFFFF', fontWeight: '600' },
-  muted: { color: '#737373', fontSize: 12 },
-  comment: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
-  commentHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  author: { fontWeight: '600', color: '#0A0A0A', fontSize: 13 },
-  body: { color: '#374151', fontSize: 14 },
-});
