@@ -56,13 +56,27 @@ const V_ALIGN: Record<string, ViewStyle['justifyContent']> = {
   bottom: 'flex-end',
 };
 
+/** True when a horizontal row splits into weighted columns (a label/value-style row). */
+function hasWeightedChild(items?: DivBlock[]): boolean {
+  return !!items?.some((c) => {
+    const w = c.width as { type?: string; weight?: number } | undefined;
+    return w?.type === 'match_parent' && w.weight != null;
+  });
+}
+
 /** Container layout: orientation + cross/main-axis content alignment. */
 export function containerStyle(b: DivBlock): ViewStyle {
   const horizontal = b.orientation === 'horizontal';
   const style: ViewStyle = {
     flexDirection: horizontal ? 'row' : 'column',
   };
-  if (typeof b.item_spacing === 'number') style.gap = b.item_spacing;
+  if (typeof b.item_spacing === 'number') {
+    style.gap = b.item_spacing;
+  } else if (horizontal && hasWeightedChild(b.items)) {
+    // Label/value split rows (detail field rows: label weight 2, value weight 3) ship with
+    // no gap, so a long label butts right against its value. Give the columns breathing room.
+    style.gap = 12;
+  }
   // In RN, alignItems is the cross axis, justifyContent the main axis.
   const ch = b.content_alignment_horizontal;
   const cv = b.content_alignment_vertical;

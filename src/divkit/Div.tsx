@@ -3,13 +3,50 @@
 // expressions in this node's own props are resolved here against the variables.
 
 import React, { useEffect, useState } from 'react';
-import { Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { Image, Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { resolve, resolveString, type Variables } from './expr';
 import { ContextMenuArea, hasLinkMenu } from './longPress';
 import { CustomPlaceholder, getCustom } from './registry';
 import { boxStyle, color, containerStyle, textStyle } from './style';
+import { colors } from './theme';
+import { toast } from '../ui/toast';
 import type { DivAction, DivBlock, DivHost } from './types';
+
+// Make URLs / emails / phone numbers inside displayed text tappable. Phone matching is
+// conservative (needs a leading + or separators) so it doesn't turn plain integers/IDs
+// into links. Only the matched runs become tappable; the rest renders unchanged.
+const LINK_RE =
+  /(https?:\/\/[^\s<>()]+|www\.[^\s<>()]+|[\w.+-]+@[\w-]+\.[\w.-]+|\+\d[\d().\-\s]{6,}\d|\(\d{2,4}\)[\d().\-\s]{4,}\d|\b\d{3}[\s.\-]\d{3,4}[\s.\-]\d{3,4}\b)/g;
+
+function hrefFor(m: string): string {
+  if (/^https?:\/\//i.test(m)) return m;
+  if (/^www\./i.test(m)) return 'https://' + m;
+  if (m.includes('@')) return 'mailto:' + m.trim();
+  return 'tel:' + m.replace(/[^\d+]/g, '');
+}
+
+function openLink(href: string): void {
+  Linking.openURL(href).catch(() => toast.error("Couldn't open it"));
+}
+
+/** Split text into plain + linkable runs (url / email / phone); null when there are none. */
+function linkify(text: string): Array<{ t: string; href?: string }> | null {
+  if (!text) return null;
+  LINK_RE.lastIndex = 0;
+  if (!LINK_RE.test(text)) return null;
+  LINK_RE.lastIndex = 0;
+  const out: Array<{ t: string; href?: string }> = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = LINK_RE.exec(text))) {
+    if (m.index > last) out.push({ t: text.slice(last, m.index) });
+    out.push({ t: m[0], href: hrefFor(m[0]) });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ t: text.slice(last) });
+  return out;
+}
 
 interface Ctx {
   vars: Variables;
@@ -63,9 +100,26 @@ function DivImpl({ block: rawBlock, ctx }: { block: DivBlock; ctx: Ctx }): React
       // and margins, and the Text keeps only its text styling. Otherwise a weighted
       // ref link (a tappable value with weight) collapses to its content width and the
       // label cell's weight shoves it to the right edge instead of filling the row.
+      const raw = resolveString(block.text, ctx.vars);
+      // Linkify plain values only — text that already has a tap action (ref cells, buttons)
+      // keeps its action; we don't want a competing link inside it.
+      const segs = onPress ? null : linkify(raw);
+      const linkColor = colors(ctx.host.theme).primary;
       const text = (
-        <Text style={[textStyle(block), onPress ? null : boxStyle(block)]} numberOfLines={block.max_lines}>
-          {resolveString(block.text, ctx.vars)}
+        // Plain values are selectable (long-press to select / copy a field value); text that
+        // has its own tap action (ref links, buttons) isn't, so selection doesn't fight the tap.
+        <Text selectable={!onPress} style={[textStyle(block), onPress ? null : boxStyle(block)]} numberOfLines={block.max_lines}>
+          {segs
+            ? segs.map((s, i) =>
+                s.href ? (
+                  <Text key={i} style={{ color: linkColor, textDecorationLine: 'underline' }} onPress={() => openLink(s.href!)}>
+                    {s.t}
+                  </Text>
+                ) : (
+                  <Text key={i}>{s.t}</Text>
+                ),
+              )
+            : raw}
         </Text>
       );
       return onPress ? (
@@ -97,19 +151,48 @@ function DivImpl({ block: rawBlock, ctx }: { block: DivBlock; ctx: Ctx }): React
       );
     }
 
-    case 'gallery':
+    case 'gallery': {
+      // A *bordered* horizontal scroll is a table (server's scrollX): the server puts the
+      // border/background on the full-width scroll frame while the content (rows) is
+      // wrap_content, so a narrow table leaves an empty bordered gap on the right. Fix:
+      //  • move the decoration onto the content so the border wraps the rows, and
+      //  • make the content fill the frame (flexGrow on the scroll content + a stretching
+      //    wrapper) so the rows span the full width — fixed columns left-pack, the row
+      //    backgrounds/separators/border reach the edge. A table wider than the screen
+      //    still has extra width, so it scrolls as before.
+      const bordered = !!block.border?.stroke?.color;
+      let deco: ViewStyle | null = null;
+      let frame: ViewStyle | null = null;
+      if (bordered) {
+        deco = { borderColor: color(block.border!.stroke!.color), borderWidth: block.border!.stroke!.width ?? 1, flexGrow: 1 };
+        const bg = block.background?.find((x) => x.type === 'solid' && x.color);
+        if (bg) deco.backgroundColor = color(bg.color);
+        if (block.border?.corner_radius != null) {
+          deco.borderRadius = block.border.corner_radius;
+          deco.overflow = 'hidden';
+        }
+        // Strip the decoration off the (full-width) frame so it no longer draws the gap.
+        frame = { backgroundColor: undefined, borderRadius: undefined, borderColor: undefined, borderWidth: undefined };
+      }
       return (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={containerStyle({ ...block, orientation: 'horizontal' })}
-          style={baseStyle}
+          contentContainerStyle={[containerStyle({ ...block, orientation: 'horizontal' }), deco]}
+          style={[baseStyle, frame]}
         >
-          {(block.items ?? []).map((c, i) => (
-            <Div key={i} block={c} ctx={ctx} />
-          ))}
+          {(block.items ?? []).map((c, i) =>
+            bordered ? (
+              <View key={i} style={{ flexGrow: 1 }}>
+                <Div block={c} ctx={ctx} />
+              </View>
+            ) : (
+              <Div key={i} block={c} ctx={ctx} />
+            ),
+          )}
         </ScrollView>
       );
+    }
 
     case 'grid': {
       const cols = block.column_count ?? 2;

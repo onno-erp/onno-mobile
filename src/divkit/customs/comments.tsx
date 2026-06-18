@@ -1,10 +1,10 @@
-// onec-comments — a per-record discussion thread. custom_props.target =
+// onno-comments — a per-record discussion thread. custom_props.target =
 // { kind, name, id }; the widget loads/posts from /api/comments/... It mirrors the
 // web entity-comments-widget: a card with the thread listed above an inline
 // composer (input + Send side by side), author avatars, and relative timestamps.
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Text, TextInput, View } from 'react-native';
-import type { Row } from '../../api/onecClient';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import type { Row } from '../../api/onnoClient';
 import { onUiEvent } from '../../api/events';
 import { colors } from '../theme';
 import type { CustomRenderer, DivHost } from '../types';
@@ -48,6 +48,58 @@ function Avatar({ url, name, c }: { url?: string | null; name?: string | null; c
   );
 }
 
+// A stored mention token `@[Display](kind/name/id)` (mirrors the server's Mentions syntax), so a
+// mentioned record round-trips and renders as a tappable onno:// route.
+const MENTION_TOKEN =
+  /@\[([^\]]+)\]\((catalogs|documents)\/([^/)\s]+)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)/g;
+
+type Pick = { display: string; kind: string; name: string; id: string };
+
+// The composer holds clean `@Display` text + the picks chosen; at send time each pick's first
+// `@Display` run is rewritten to its full token so the server stores the route triple.
+function toTokenBody(text: string, picks: Pick[]): string {
+  let out = text;
+  for (const p of picks) {
+    const needle = `@${p.display}`;
+    const at = out.indexOf(needle);
+    if (at < 0) continue;
+    const token = `@[${p.display.replace(/]/g, '')}](${p.kind}/${p.name}/${p.id})`;
+    out = out.slice(0, at) + token + out.slice(at + needle.length);
+  }
+  return out;
+}
+
+// The `@query` run just before the caret (empty right after `@`), or null when the caret isn't
+// in a mention context — a mention starts at line-start or after whitespace and runs to the caret.
+function activeMentionQuery(text: string, caret: number): { query: string; start: number } | null {
+  const before = text.slice(0, Math.max(0, Math.min(caret, text.length)));
+  const m = /(?:^|\s)@([^\s@]*)$/.exec(before);
+  if (!m) return null;
+  return { query: m[1], start: before.length - m[1].length - 1 };
+}
+
+// Render a comment body: mention tokens become tappable @links (open the record), the runs
+// between them stay plain text.
+function renderBody(body: string, host: DivHost, c: ReturnType<typeof colors>): React.ReactNode {
+  const re = new RegExp(MENTION_TOKEN);
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body))) {
+    if (m.index > last) out.push(body.slice(last, m.index));
+    const [, display, mkind, mname, mid] = m;
+    out.push(
+      <Text key={`m${key++}`} style={{ color: c.primary, fontWeight: '500' }} onPress={() => host.fire(`onno://${mkind}/${mname}/${mid}`)}>
+        @{display}
+      </Text>,
+    );
+    last = m.index + m[0].length;
+  }
+  if (last < body.length) out.push(body.slice(last));
+  return out;
+}
+
 function Comments({ target, host }: { target: Record<string, any>; host: DivHost }) {
   const c = colors(host.theme);
   const kind = (target.kind as string) ?? '';
@@ -56,6 +108,17 @@ function Comments({ target, host }: { target: Record<string, any>; host: DivHost
   const [comments, setComments] = useState<Row[] | null>(null);
   const [text, setText] = useState('');
   const [posting, setPosting] = useState(false);
+  // @-mention compose state: clean `@Display` text in `text`, the chosen records in `picks`,
+  // the active `@query` in `mq`, and its live suggestions. Refs track the latest text + caret
+  // so the once-bound handlers read current values.
+  const [picks, setPicks] = useState<Pick[]>([]);
+  const [mq, setMq] = useState<{ query: string; start: number } | null>(null);
+  const [suggestions, setSuggestions] = useState<Row[]>([]);
+  const [composing, setComposing] = useState(false); // the keyboard-anchored compose overlay is open
+  const textRef = useRef(text);
+  textRef.current = text;
+  const caretRef = useRef(0);
+  const reqSeq = useRef(0);
 
   async function load() {
     try {
@@ -80,16 +143,65 @@ function Comments({ target, host }: { target: Record<string, any>; host: DivHost
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, name, id]);
 
+  // Debounced @-mention typeahead while a mention query is active; stale responses ignored.
+  useEffect(() => {
+    if (mq === null) {
+      setSuggestions([]);
+      return;
+    }
+    const seq = ++reqSeq.current;
+    const t = setTimeout(() => {
+      host.client
+        .searchMentions(mq.query)
+        .then((rows) => { if (seq === reqSeq.current) setSuggestions(rows); })
+        // Mentions disabled (404) / any failure → no suggestions; the box still posts plain text.
+        .catch(() => { if (seq === reqSeq.current) setSuggestions([]); });
+    }, 160);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mq]);
+
+  const onChangeText = (t: string) => {
+    textRef.current = t;
+    setText(t);
+    setMq(activeMentionQuery(t, t.length)); // optimistic (caret ≈ end); onSelectionChange refines
+  };
+  const onSelectionChange = (e: { nativeEvent?: { selection?: { start?: number } } }) => {
+    const car = e?.nativeEvent?.selection?.start ?? textRef.current.length;
+    caretRef.current = car;
+    setMq(activeMentionQuery(textRef.current, car));
+  };
+  // Insert a chosen suggestion: replace the active `@query` run with clean `@Display `, record the
+  // pick (serialized to its token at send), and close the picker.
+  const choose = (s: Row) => {
+    const ctx = mq ?? activeMentionQuery(textRef.current, caretRef.current);
+    if (!ctx) return;
+    const display = String(s.display ?? '');
+    const t = textRef.current;
+    const end = Math.max(ctx.start, Math.min(caretRef.current, t.length));
+    const newText = t.slice(0, ctx.start) + `@${display} ` + t.slice(end);
+    textRef.current = newText;
+    setText(newText);
+    setPicks((prev) => [...prev, { display, kind: String(s.kind), name: String(s.name), id: String(s.id) }]);
+    setMq(null);
+    setSuggestions([]);
+  };
+
   async function send() {
-    const body = text.trim();
-    if (!body || posting) return;
+    const raw = text.trim();
+    if (!raw || posting) return;
     setPosting(true);
     try {
-      const saved = await host.client.addComment(kind, name, id, body);
+      const saved = await host.client.addComment(kind, name, id, toTokenBody(raw, picks));
       // Append the saved row optimistically (it carries the server-stamped author
       // and timestamp) rather than re-fetching the whole thread.
       setComments((prev) => [...(prev ?? []), saved]);
       setText('');
+      textRef.current = '';
+      setPicks([]);
+      setMq(null);
+      setSuggestions([]);
+      setComposing(false); // close the overlay; the thread updates behind it
     } catch {
       /* keep the draft so the user can retry */
     } finally {
@@ -149,7 +261,7 @@ function Comments({ target, host }: { target: Record<string, any>; host: DivHost
                       </Touchable>
                     ) : null}
                   </View>
-                  <Text style={{ fontSize: 14, color: c.text, marginTop: 2 }}>{String(cm.body ?? '')}</Text>
+                  <Text style={{ fontSize: 14, color: c.text, marginTop: 2 }}>{renderBody(String(cm.body ?? ''), host, c)}</Text>
                 </View>
               </View>
             );
@@ -157,38 +269,78 @@ function Comments({ target, host }: { target: Record<string, any>; host: DivHost
         </View>
       )}
 
-      {/* Inline composer: input grows, Send pinned to its bottom-right. */}
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginTop: 16 }}>
-        <TextInput
-          style={{ flex: 1, borderWidth: 1, borderColor: c.fieldBorder, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: c.text, minHeight: 44, maxHeight: 120, backgroundColor: c.fieldBg }}
-          value={text}
-          onChangeText={setText}
-          placeholder="Write a comment…"
-          placeholderTextColor={c.muted}
-          multiline
-          textAlignVertical="top"
-          editable={!posting}
-        />
-        <Touchable
-          style={{ height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 10, paddingHorizontal: 16, backgroundColor: c.accentBg, opacity: canSend ? 1 : 0.5 }}
-          disabled={!canSend}
-          onPress={send}
-        >
-          {posting ? (
-            <ActivityIndicator color={c.accentFg} size="small" />
-          ) : (
-            <>
-              <LucideIcon name="send" size={15} color={c.accentFg} />
-              <Text style={{ color: c.accentFg, fontWeight: '600', fontSize: 14 }}>Send</Text>
-            </>
-          )}
-        </Touchable>
-      </View>
+      {/* The composer is keyboard-anchored (mobile pattern): this is just a trigger; tapping it
+          opens an overlay where the input sits right above the keyboard and @-mentions pop up
+          above it. Shows the current draft so a closed-but-unsent comment is still visible. */}
+      <Touchable
+        onPress={() => setComposing(true)}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16, borderWidth: 1, borderColor: c.fieldBorder, borderRadius: 10, paddingHorizontal: 12, minHeight: 44, backgroundColor: c.fieldBg }}
+      >
+        <Text style={{ flex: 1, fontSize: 14, color: text.trim() ? c.text : c.muted }} numberOfLines={1}>
+          {text.trim() ? text : 'Write a comment…'}
+        </Text>
+        <LucideIcon name="at-sign" size={16} color={c.muted} />
+      </Touchable>
+
+      {/* Compose overlay: input pinned just above the keyboard, suggestions stacked above it. */}
+      <Modal visible={composing} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setComposing(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' }} onPress={() => setComposing(false)} />
+
+          {mq && suggestions.length > 0 ? (
+            <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 240, backgroundColor: c.card, borderTopWidth: 1, borderTopColor: c.border }}>
+              {suggestions.slice(0, 8).map((s, i) => (
+                <Touchable
+                  key={`${s.kind}/${s.id}/${i}`}
+                  onPress={() => choose(s)}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: c.border }}
+                >
+                  <Avatar url={s.avatarUrl as string} name={s.display as string} c={c} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, color: c.text }} numberOfLines={1}>{String(s.display ?? '')}</Text>
+                    {s.entity ? <Text style={{ fontSize: 11, color: c.muted }} numberOfLines={1}>{String(s.entity)}</Text> : null}
+                  </View>
+                  <LucideIcon name="at-sign" size={14} color={c.muted} />
+                </Touchable>
+              ))}
+            </ScrollView>
+          ) : null}
+
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12, backgroundColor: c.card, borderTopWidth: mq && suggestions.length > 0 ? 0 : 1, borderTopColor: c.border }}>
+            <TextInput
+              autoFocus
+              style={{ flex: 1, borderWidth: 1, borderColor: c.fieldBorder, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: c.text, minHeight: 44, maxHeight: 120, backgroundColor: c.fieldBg }}
+              value={text}
+              onChangeText={onChangeText}
+              onSelectionChange={onSelectionChange}
+              placeholder="Write a comment…  (@ to mention)"
+              placeholderTextColor={c.muted}
+              multiline
+              textAlignVertical="top"
+              editable={!posting}
+            />
+            <Touchable
+              style={{ height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 10, paddingHorizontal: 16, backgroundColor: c.accentBg, opacity: canSend ? 1 : 0.5 }}
+              disabled={!canSend}
+              onPress={send}
+            >
+              {posting ? (
+                <ActivityIndicator color={c.accentFg} size="small" />
+              ) : (
+                <>
+                  <LucideIcon name="send" size={15} color={c.accentFg} />
+                  <Text style={{ color: c.accentFg, fontWeight: '600', fontSize: 14 }}>Send</Text>
+                </>
+              )}
+            </Touchable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
 
-export const onecComments: CustomRenderer = ({ block, host }) => {
+export const onnoComments: CustomRenderer = ({ block, host }) => {
   const target = (block.custom_props?.target as Record<string, any>) ?? {};
   return <Comments target={target} host={host} />;
 };

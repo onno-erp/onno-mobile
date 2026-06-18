@@ -131,8 +131,8 @@ export function subscribeUiEvents(baseUrl: string, onEvent: (e: UiEvent) => void
   };
 }
 
-// ----- in-process fan-out (the RN stand-in for the web's `window` "onec:dataevent") -----
-// One SSE stream lives in App; data-driven customs (onec-list, onec-widget) can't see it,
+// ----- in-process fan-out (the RN stand-in for the web's `window` "onno:dataevent") -----
+// One SSE stream lives in App; data-driven customs (onno-list, onno-widget) can't see it,
 // so App re-publishes every event here and those widgets subscribe to self-refresh. Without
 // this, reloading the content card doesn't touch a list/widget that fetches its own rows
 // (its mount effect never re-runs — the card keeps the same React key across a reload).

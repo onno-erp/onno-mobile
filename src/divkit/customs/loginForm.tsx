@@ -1,4 +1,4 @@
-// onec-login-form — the username/password sub-form of the server-driven login screen
+// onno-login-form — the username/password sub-form of the server-driven login screen
 // (LoginDivBuilder emits it when password auth is enabled). DivKit can't read input
 // values on a button tap, so this is a real RN form: it captures the credentials, calls
 // the API client's login, and on success reloads the app at home. SSO buttons stay pure
@@ -36,9 +36,9 @@ function LoginForm({ host }: { host: DivHost }) {
     setError('');
     try {
       await host.client.login(username, password);
-      // Reload the app at home (mirrors the web's navigate-to-intended-page): `onec://app`
+      // Reload the app at home (mirrors the web's navigate-to-intended-page): `onno://app`
       // re-fetches the shell + the default content with a now-authenticated session.
-      host.fire('onec://app');
+      host.fire('onno://app');
     } catch {
       setError('The username or password is not correct.');
     } finally {
@@ -88,4 +88,4 @@ function LoginForm({ host }: { host: DivHost }) {
   );
 }
 
-export const onecLoginForm: CustomRenderer = ({ host }) => <LoginForm host={host} />;
+export const onnoLoginForm: CustomRenderer = ({ host }) => <LoginForm host={host} />;

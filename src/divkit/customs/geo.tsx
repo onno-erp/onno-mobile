@@ -1,7 +1,7 @@
 // The map surfaces — all hand-written raster-tile slippy maps, since RN ships no map SDK / WebView:
 //   • GeoField  — the single-point picker for `.widget("map")` (web geo-picker.tsx).
 //   • MapEditor — the point/line/area geometry editor for `.widget("geojson")` (web map-editor.tsx).
-//   • GeoMap    — the read-only map for the `onec-geo` detail custom + the dashboard `map` widget.
+//   • GeoMap    — the read-only map for the `onno-geo` detail custom + the dashboard `map` widget.
 // The basemap is CARTO's themed monochrome raster (light_all/dark_all), exactly like the web SPA —
 // not raw OpenStreetMap (which blocks app clients and isn't the monochrome look the web uses).
 
@@ -257,7 +257,7 @@ export function GeoField({ value, onChange, theme, lockScroll }: { value?: strin
   );
 }
 
-// ===== Read-only map — the `onec-geo` detail custom + the dashboard `map` widget =====
+// ===== Read-only map — the `onno-geo` detail custom + the dashboard `map` widget =====
 // The web client renders both with MapLibre; RN ships no map SDK, so — exactly like the
 // GeoField editor above — this is a hand-written CARTO raster-tile map. It plots a set of
 // normalized shapes (markers / paths / areas), auto-fitting the view to their bounds.
@@ -540,11 +540,11 @@ export function GeoMap({ shapes, theme, height = 200, host, interactive = false 
 }
 
 /**
- * `onec-geo` — the read-only detail map for a `.widget("map")` field. The server emits
+ * `onno-geo` — the read-only detail map for a `.widget("map")` field. The server emits
  * `custom_props.geo = { value: "lat,lng" (or GeoJSON), label }`; we plot it pinned. Falls back to
  * the raw text when the value isn't valid geometry (mirrors the web GeoView), so nothing is swallowed.
  */
-export const onecGeo: CustomRenderer = ({ customProps, host }) => {
+export const onnoGeo: CustomRenderer = ({ customProps, host }) => {
   const geo = (customProps.geo as { value?: string; label?: string } | undefined) ?? {};
   const shapes = toShapes(geo.value, { label: geo.label });
   if (!shapes.length) {
@@ -554,7 +554,7 @@ export const onecGeo: CustomRenderer = ({ customProps, host }) => {
   return <GeoMap shapes={shapes} theme={host.theme} height={200} host={host} />;
 };
 
-// ===== ListMapView — the map alternative to an onec-list's table =====
+// ===== ListMapView — the map alternative to an onno-list's table =====
 // Fetches the entity's rows (capped — a map can't virtualize) and plots the ones with geometry as
 // tappable markers/shapes; tapping a marker opens the record. The RN counterpart of the web SPA's
 // list-map-view.tsx, drawn with the same hand-written GeoMap (no map SDK).
@@ -613,7 +613,7 @@ export function ListMapView({
     if (!rows) return [];
     const out: GeoShape[] = [];
     for (const row of rows) {
-      const href = row._id != null ? `onec://${kind}/${name}/${row._id}` : undefined;
+      const href = row._id != null ? `onno://${kind}/${name}/${row._id}` : undefined;
       out.push(...shapesFromRow(row, source, { label: labelForRow(row, labelField), href }));
     }
     return out;

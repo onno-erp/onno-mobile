@@ -1,4 +1,4 @@
-// A pragmatic subset of the DivKit JSON schema — only the fields the OneC
+// A pragmatic subset of the DivKit JSON schema — only the fields the Onno
 // server emits for the mobile viewport. Everything is loose (`any`-ish) on
 // purpose: the document is server-driven and we resolve expressions at runtime.
 
@@ -90,7 +90,7 @@ export interface DivBackground {
   color?: string;
 }
 
-/** A custom-widget renderer registered for an `onec-*` custom_type. */
+/** A custom-widget renderer registered for an `onno-*` custom_type. */
 export type CustomRenderer = (props: {
   block: DivBlock;
   customProps: Record<string, unknown>;
@@ -99,12 +99,12 @@ export type CustomRenderer = (props: {
 
 /** Everything a card/custom widget needs from the embedding app. */
 export interface DivHost {
-  /** Dispatch an `onec://…` (or `div-action://…`) action url. */
+  /** Dispatch an `onno://…` (or `div-action://…`) action url. */
   fire: (url: string) => void;
   /** Warm the cache for a nav destination on touch-down (best-effort; a no-op for
    *  non-navigation actions), so the screen is ready by the time the tap lands. */
   prefetch?: (url: string) => void;
-  /** The shareable web URL an `onec://…` navigation maps to (origin + path), used
+  /** The shareable web URL an `onno://…` navigation maps to (origin + path), used
    *  by the long-press "Copy link / Open in browser" menu. Returns null for
    *  side-effect actions (post/delete/logout/theme) — those aren't links. */
   linkFor?: (url: string) => string | null;
@@ -113,8 +113,12 @@ export interface DivHost {
   setVar: (name: string, value: unknown) => void;
   /** Reload the current surface after a write (post/save/delete). */
   refresh: () => void;
+  /** Present when this card is an embedded create form opened from a reference picker.
+   *  On a successful create the form calls this with the saved row (instead of
+   *  navigating to its detail), so the picker can select it and close the overlay. */
+  onCreated?: (row: Record<string, any>) => void;
   /** The API client, for data-driven customs (list/widget/form/comments). */
-  client: import('../api/onecClient').OnecClient;
+  client: import('../api/onnoClient').OnnoClient;
   /** Origin used to absolutize relative image urls. */
   baseUrl?: string;
   theme: 'light' | 'dark';

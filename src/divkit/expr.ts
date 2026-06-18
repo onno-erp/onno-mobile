@@ -2,7 +2,7 @@
 //
 // This is the part of the DivKit *web* SDK that is genuinely platform-agnostic
 // (no DOM, no Svelte): variable references, string interpolation, arithmetic,
-// comparisons, booleans and ternaries. We re-implement the subset the OneC
+// comparisons, booleans and ternaries. We re-implement the subset the Onno
 // server actually emits rather than running the Svelte renderer, so the result
 // can drive native React Native components instead of HTML.
 

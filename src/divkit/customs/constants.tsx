@@ -1,11 +1,11 @@
-// onec-constants — the app-settings editor embedded into a page (PageBuilder.constants).
+// onno-constants — the app-settings editor embedded into a page (PageBuilder.constants).
 // Renders the framework's `@Constant` values as toggles/inputs (served by SettingsController,
 // admin-only) and saves them in place via PUT /api/settings. Port of the web SPA's
 // constants-editor.tsx. custom_props: { title, names?: string[] }.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Switch, Text, TextInput, View } from 'react-native';
-import type { Row, SettingMeta } from '../../api/onecClient';
+import type { Row, SettingMeta } from '../../api/onnoClient';
 import { colors } from '../theme';
 import type { CustomRenderer, DivHost } from '../types';
 import { Touchable } from '../../ui/touchable';
@@ -160,7 +160,7 @@ function ConstantsEditor({ host, title, names }: { host: DivHost; title?: string
   );
 }
 
-export const onecConstants: CustomRenderer = ({ customProps, host }) => {
+export const onnoConstants: CustomRenderer = ({ customProps, host }) => {
   const title = (customProps.title as string) || undefined;
   const names = parseNames(customProps.names);
   return <ConstantsEditor host={host} title={title} names={names} />;

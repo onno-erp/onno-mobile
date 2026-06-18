@@ -28,7 +28,7 @@ export interface Credentials {
   password: string;
 }
 
-const KEY_PREFIX = 'onec.cred.';
+const KEY_PREFIX = 'onno.cred.';
 
 /** Canonical server identity: scheme-upgraded + trailing-slash-trimmed, matching the server list. */
 function canonical(serverUrl: string): string {
@@ -44,11 +44,8 @@ function keyFor(serverUrl: string): string {
 export async function saveCredentials(serverUrl: string, username: string, password: string): Promise<void> {
   try {
     await AsyncStorage.setItem(keyFor(serverUrl), JSON.stringify({ username, password }));
-    // eslint-disable-next-line no-console
-    console.log('[auth] save(AsyncStorage) OK key=' + keyFor(serverUrl));
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.log('[auth] save(AsyncStorage) FAILED key=' + keyFor(serverUrl), String((e as any)?.message ?? e));
+  } catch {
+    /* best-effort */
   }
 }
 
@@ -56,20 +53,18 @@ export async function saveCredentials(serverUrl: string, username: string, passw
 export async function getCredentials(serverUrl: string): Promise<Credentials | null> {
   try {
     const raw = await AsyncStorage.getItem(keyFor(serverUrl));
-    // eslint-disable-next-line no-console
-    console.log('[auth] get(AsyncStorage) key=' + keyFor(serverUrl), 'raw=' + (raw ? 'present' : 'null'));
     if (!raw) return null;
     const v = JSON.parse(raw);
     if (typeof v?.username !== 'string' || typeof v?.password !== 'string') return null;
     return { username: v.username, password: v.password };
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.log('[auth] get(AsyncStorage) FAILED', String((e as any)?.message ?? e));
+  } catch {
     return null;
   }
 }
 
-/** Forget a server's saved credentials (on explicit logout or when the server is removed). */
+/** Forget a server's saved credentials — only when a server is removed from the picker.
+ *  A plain logout deliberately does NOT call this (see OnnoClient.logout): the creds are
+ *  kept so re-selecting the server signs straight back in. */
 export async function clearCredentials(serverUrl: string): Promise<void> {
   try {
     await AsyncStorage.removeItem(keyFor(serverUrl));

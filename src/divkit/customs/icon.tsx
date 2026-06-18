@@ -1,4 +1,4 @@
-// onec-icon / onec-hint — the lightweight chrome customs.
+// onno-icon / onno-hint — the lightweight chrome customs.
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Dimensions, Easing, Modal, Pressable, Text, View } from 'react-native';
 import { color } from '../style';
@@ -7,9 +7,9 @@ import type { CustomRenderer } from '../types';
 import { Touchable } from '../../ui/touchable';
 import { LucideIcon } from './lucide';
 
-// onec-icon: a lucide glyph by name. Highlights with `activeColor` when the
+// onno-icon: a lucide glyph by name. Highlights with `activeColor` when the
 // card's `active_path` variable matches this icon's `activePath` (nav bar).
-export const onecIcon: CustomRenderer = ({ customProps, host }) => {
+export const onnoIcon: CustomRenderer = ({ customProps, host }) => {
   const name = customProps.name as string | undefined;
   const size = Number(customProps.size ?? 16);
   const activePath = customProps.activePath as string | undefined;
@@ -31,7 +31,7 @@ interface Rect {
  * A muted help glyph that reveals author-supplied hint text on tap — mobile's
  * equivalent of the web's hover tooltip (see web `HintIcon`). Theme-aware, and
  * renders nothing when the text is blank, so callers can pass an optional hint
- * unconditionally. Used by the `onec-hint` custom and next to widget titles.
+ * unconditionally. Used by the `onno-hint` custom and next to widget titles.
  */
 export function HintGlyph({
   text,
@@ -126,8 +126,8 @@ export function HintGlyph({
   );
 }
 
-// onec-hint: a tappable help glyph that reveals the author-supplied `text`.
-export const onecHint: CustomRenderer = ({ customProps, host }) => (
+// onno-hint: a tappable help glyph that reveals the author-supplied `text`.
+export const onnoHint: CustomRenderer = ({ customProps, host }) => (
   <HintGlyph
     text={customProps.text as string | undefined}
     c={colors(host.theme)}

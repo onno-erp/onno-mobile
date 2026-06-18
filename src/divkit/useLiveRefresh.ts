@@ -1,4 +1,4 @@
-// A data-driven custom (onec-list, onec-widget) fetches its own rows on mount and so
+// A data-driven custom (onno-list, onno-widget) fetches its own rows on mount and so
 // misses live changes — reloading the content card doesn't remount it. This hook wires
 // it to the SSE fan-out: when an event touches its entity, it re-runs `refresh` (debounced,
 // to coalesce the burst a single write emits — e.g. posted + register changed).

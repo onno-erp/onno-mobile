@@ -14,7 +14,7 @@ import { colors } from '../theme';
 import { Touchable } from '../../ui/touchable';
 import { LucideIcon } from './lucide';
 
-// Client-side guard mirroring the server's onec.media.max-file-size default (10 MB); the server
+// Client-side guard mirroring the server's onno.media.max-file-size default (10 MB); the server
 // validates authoritatively, this just gives instant feedback.
 const MAX_BYTES = 10 * 1024 * 1024;
 // Several images live newline-joined in one String attribute (stored/data URLs carry no newline).

@@ -1,7 +1,7 @@
-// A hand-written DivKit document shaped like what the OneC server's
+// A hand-written DivKit document shaped like what the Onno server's
 // `SurfaceDivBuilder` emits — ported from the Flutter client's
 // `sample_cards.dart`. Used to prove the RN renderer draws and dispatches
-// before the live API is wired up. Adds a `@{…}` expression and an `onec-icon`
+// before the live API is wired up. Adds a `@{…}` expression and an `onno-icon`
 // custom to exercise the expression engine and the custom registry.
 
 import type { DivBlock, DivCardEnvelope } from './types';
@@ -27,7 +27,7 @@ export function sampleDocumentListCard(): DivCardEnvelope {
   return {
     templates: {},
     card: {
-      log_id: 'onec-document-list',
+      log_id: 'onno-document-list',
       variables: [{ type: 'integer', name: 'count', value: 3 }],
       states: [
         {
@@ -42,7 +42,7 @@ export function sampleDocumentListCard(): DivCardEnvelope {
                 orientation: 'horizontal',
                 content_alignment_vertical: 'center',
                 items: [
-                  { type: 'custom', custom_type: 'onec-icon', custom_props: { name: 'Book', size: 22 } },
+                  { type: 'custom', custom_type: 'onno-icon', custom_props: { name: 'Book', size: 22 } },
                   {
                     type: 'container',
                     orientation: 'vertical',
@@ -61,11 +61,11 @@ export function sampleDocumentListCard(): DivCardEnvelope {
                 ],
               },
               { type: 'separator', margins: { top: 12, bottom: 4 } },
-              row('SO-0001', '2026-05-30', 'Posted', 'onec://documents/booking/1'),
+              row('SO-0001', '2026-05-30', 'Posted', 'onno://documents/booking/1'),
               { type: 'separator' },
-              row('SO-0002', '2026-05-31', 'Draft', 'onec://documents/booking/2'),
+              row('SO-0002', '2026-05-31', 'Draft', 'onno://documents/booking/2'),
               { type: 'separator' },
-              row('SO-0003', '2026-06-01', 'Draft', 'onec://documents/booking/3'),
+              row('SO-0003', '2026-06-01', 'Draft', 'onno://documents/booking/3'),
             ],
           },
         },

@@ -1,4 +1,4 @@
-// onec-actions — a page-level section of action buttons (PageBuilder.actions). Each
+// onno-actions — a page-level section of action buttons (PageBuilder.actions). Each
 // button either runs an обработка-style server handler (POST /api/divkit/page-action)
 // or routes the client. Port of the web SPA's page-actions-bar.tsx. custom_props:
 // { heading, route, profile, buttons: [{ key, label, icon?, logo?, server, url? }] }.
@@ -26,7 +26,7 @@ function absolutize(url: string | undefined, baseUrl?: string): string | undefin
   return baseUrl.replace(/\/$/, '') + (url.startsWith('/') ? url : `/${url}`);
 }
 
-export const onecActions: CustomRenderer = ({ customProps, host }) => {
+export const onnoActions: CustomRenderer = ({ customProps, host }) => {
   const c = colors(host.theme);
   const heading = (customProps.heading as string) || '';
   const route = (customProps.route as string) || '';

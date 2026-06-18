@@ -4,7 +4,7 @@
 // client, refresh, and image-origin come from the embedding app.
 
 import React, { useMemo, useState } from 'react';
-import type { OnecClient } from '../api/onecClient';
+import type { OnnoClient } from '../api/onnoClient';
 import { Div } from './Div';
 import { applyTemplates } from './templates';
 import type { DivCardEnvelope, DivHost, DivVariable } from './types';
@@ -14,11 +14,14 @@ export interface DivCardProps {
   fire: (url: string) => void;
   prefetch?: (url: string) => void;
   linkFor?: (url: string) => string | null;
-  client: OnecClient;
+  client: OnnoClient;
   refresh?: () => void;
   baseUrl?: string;
   theme?: 'light' | 'dark';
   lockScroll?: (locked: boolean) => void;
+  /** Forwarded to the host so an embedded create form (reference picker) can report
+   *  its saved row instead of navigating to its detail. */
+  onCreated?: (row: Record<string, any>) => void;
   /** Variables injected by the app (e.g. `active_path` for nav highlight). */
   vars?: Record<string, unknown>;
   stateId?: number;
@@ -34,6 +37,7 @@ export function DivCard({
   baseUrl,
   theme = 'light',
   lockScroll,
+  onCreated,
   vars: externalVars,
   stateId,
 }: DivCardProps) {
@@ -53,10 +57,11 @@ export function DivCard({
       baseUrl,
       theme,
       lockScroll,
+      onCreated,
       getVar: (name) => vars[name],
       setVar: (name, value) => setLocalVars((v) => ({ ...v, [name]: value })),
     }),
-    [fire, prefetch, linkFor, client, refresh, baseUrl, theme, lockScroll, vars],
+    [fire, prefetch, linkFor, client, refresh, baseUrl, theme, lockScroll, onCreated, vars],
   );
 
   const state = useMemo(() => {

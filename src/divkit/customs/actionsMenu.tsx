@@ -1,4 +1,4 @@
-// onec-actions-menu — the detail/list action bar. custom_props.items:
+// onno-actions-menu — the detail/list action bar. custom_props.items:
 // [{ label, icon, url, tone: accent|normal|danger, placement: primary|menu }].
 // Primary items render as inline buttons; menu items collapse under a "⋯" toggle.
 import React, { useEffect, useRef, useState } from 'react';
@@ -35,7 +35,7 @@ function toneOf(tone: string | undefined, c: ThemeColors): { bg: string; fg: str
   }
 }
 
-export const onecActionsMenu: CustomRenderer = ({ block, host }) => {
+export const onnoActionsMenu: CustomRenderer = ({ block, host }) => {
   const c = colors(host.theme);
   // Layered key + ambient shadow (iOS-menu style); deeper in dark mode so the
   // popover still separates from a dark background. boxShadow needs the New

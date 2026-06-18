@@ -1,4 +1,4 @@
-import './customs'; // side-effect: register all onec-* renderers
+import './customs'; // side-effect: register all onno-* renderers
 
 export { DivCard } from './DivCard';
 export type { DivCardProps } from './DivCard';

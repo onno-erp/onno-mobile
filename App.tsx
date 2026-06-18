@@ -4,19 +4,23 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Appearance,
   AppState,
+  BackHandler,
   Dimensions,
+  KeyboardAvoidingView,
   Linking,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useColorScheme,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
-import { OnecAuthError, OnecClient } from './src/api/onecClient';
+import { OnnoAuthError, OnnoClient } from './src/api/onnoClient';
 import { subscribeUiEvents, affectsSurface, publishUiEvent } from './src/api/events';
 import { toast, Toaster } from './src/ui/toast';
 import { confirm, ConfirmHost } from './src/ui/dialog';
@@ -28,16 +32,17 @@ import {
   removeServer,
   type ServerEntry,
 } from './src/api/servers';
-import { getStoredTheme, setStoredTheme } from './src/api/prefs';
+import { getLastRoute, getStoredThemePref, setLastRoute, setStoredThemePref, type ThemePref } from './src/api/prefs';
 import { clearCredentials, getCredentials } from './src/api/credentials';
 import { ConnectScreen } from './src/ConnectScreen';
 import { LoginScreen } from './src/LoginScreen';
 import { DivCard } from './src/divkit';
 import type { DivCardEnvelope } from './src/divkit';
-import { colors } from './src/divkit/theme';
+import { colors, setBrand } from './src/divkit/theme';
+import { SwipeBackArea } from './src/nav/SwipeBackArea';
 
 type Status = 'connecting' | 'ready' | 'error' | 'login';
-type Shell = Awaited<ReturnType<OnecClient['shell']>>;
+type Shell = Awaited<ReturnType<OnnoClient['shell']>>;
 
 // An iPad (or a large-screen Android tablet) reports the `tablet` viewport, so the
 // server returns its tablet layout: 2-column dashboards/content, an extra nav
@@ -56,8 +61,8 @@ const TOP_FADE = 28; // length of the dissolve tail just below the safe area
 // actions (logout / theme / post / open / SSO …) that shouldn't be prefetched.
 // Mirrors the routing in onAction — anything that isn't a plain navigation.
 function navPathFor(url: string): string | null {
-  if (!url.startsWith('onec://')) return null;
-  const rest = url.slice('onec://'.length);
+  if (!url.startsWith('onno://')) return null;
+  const rest = url.slice('onno://'.length);
   if (
     rest === 'logout' ||
     rest === 'theme/toggle' ||
@@ -80,12 +85,17 @@ export default function App() {
   const insets = useSafeAreaInsets();
   // One client per server; recreated on switch (the CSRF/session state it holds
   // is server-specific). `serverUrl === null` means "show the picker".
-  const clientRef = useRef<OnecClient | null>(null);
+  const clientRef = useRef<OnnoClient | null>(null);
   const [serverUrl, setServerUrl] = useState<string | null>(null);
   const [servers, setServers] = useState<ServerEntry[]>([]);
   const [booting, setBooting] = useState(true);
 
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  // Theme is a *preference* (system/light/dark); the effective light/dark value is
+  // derived. `system` follows the OS via useColorScheme, so flipping the phone's
+  // appearance flips the app live (the theme-change effect below re-fetches).
+  const [themePref, setThemePref] = useState<ThemePref>('system');
+  const systemScheme = useColorScheme();
+  const theme: 'light' | 'dark' = themePref === 'system' ? (systemScheme === 'dark' ? 'dark' : 'light') : themePref;
   const [profile, setProfile] = useState<string | undefined>(undefined);
   const [shell, setShell] = useState<Shell | null>(null);
   const [route, setRoute] = useState('/');
@@ -106,6 +116,13 @@ export default function App() {
   // Suspends content scrolling while a child owns a pan gesture (maps), since RN's
   // ScrollView won't otherwise yield to a JS PanResponder nested inside it.
   const [scrollLocked, setScrollLocked] = useState(false);
+  // Linear back stack of routes we've navigated through (the route we *leave* is
+  // pushed on each forward navigation). Drives the swipe-back gesture and the
+  // Android hardware back button; reset on server switch / sign-out. The ref mirror
+  // lets goBack/the BackHandler read the latest stack without re-binding.
+  const [history, setHistory] = useState<string[]>([]);
+  const historyRef = useRef(history);
+  historyRef.current = history;
 
   // The SSE handler must reload the *current* surface with the *current* theme/profile
   // without re-subscribing on every navigation. These refs always hold the latest.
@@ -125,22 +142,71 @@ export default function App() {
 
   async function loadShell(th: 'light' | 'dark' = theme) {
     const client = clientRef.current;
-    if (!client) return;
+    if (!client) return null;
     try {
-      setShell(await client.shell({ viewport: VIEWPORT, theme: th, profile }));
+      const sh = await client.shell({ viewport: VIEWPORT, theme: th, profile });
+      setShell(sh);
+      return sh;
     } catch {
-      /* nav is non-fatal; content still shows */
+      return null; // nav is non-fatal; content still shows
     }
   }
 
-  async function loadContent(path: string, th: 'light' | 'dark' = theme, opts: { force?: boolean } = {}) {
+  // Apply the server's brand palette (vetovet green, etc.) to the RN-drawn customs.
+  // Awaited before the first content render so accents paint branded, with no blue→brand flash.
+  async function loadBranding() {
+    const client = clientRef.current;
+    if (!client) return;
+    try {
+      const b = await client.branding();
+      setBrand(b?.palette ?? null);
+    } catch {
+      setBrand(null); // fall back to the default palette
+    }
+  }
+
+  // Enter the app after auth: apply branding, then open the route to land on. We restore the
+  // last route saved for this server (so a relaunch after iOS killed the backgrounded app
+  // returns you to where you were), falling back to the server's configured home, then '/'.
+  // With a saved route, shell + content load together (fast); only a first-ever connect waits
+  // on the shell to learn `home`.
+  async function enterApp(th: 'light' | 'dark' = theme) {
+    const client = clientRef.current;
+    if (!client) return;
+    await loadBranding();
+    const saved = await getLastRoute(client.baseUrl);
+    if (saved) {
+      await Promise.all([loadShell(th), loadContent(saved, th)]);
+    } else {
+      const sh = await loadShell(th);
+      await loadContent(sh?.home || '/', th);
+    }
+  }
+
+  async function loadContent(
+    path: string,
+    th: 'light' | 'dark' = theme,
+    opts: { force?: boolean; back?: boolean } = {},
+  ) {
     const client = clientRef.current;
     if (!client) return;
     const myId = ++reqSeq.current;
     const o = { viewport: VIEWPORT, theme: th, profile };
     const navigating = path !== routeRef.current; // moving to a *different* screen
+    // Record the route we're leaving on the back stack — but only for genuine
+    // forward navigation: skip the initial load (nothing on screen yet), same-route
+    // refreshes/theme changes, and the back-nav itself (it already popped). Navigating
+    // straight to where "back" would land collapses the stack instead of growing it
+    // (so tab ping-pong A→B→A doesn't pile up).
+    if (navigating && !opts.back && content != null) {
+      const from = routeRef.current;
+      setHistory((h) =>
+        h.length && h[h.length - 1] === path ? h.slice(0, -1) : [...h, from].slice(-50),
+      );
+    }
     setRoute(path);
     setError('');
+    setLastRoute(client.baseUrl, path).catch(() => {}); // remember the page for cold-start restore
 
     // Native feel: if we've shown this screen before, paint the cached card
     // instantly and revalidate silently; otherwise show the connecting state.
@@ -180,7 +246,23 @@ export default function App() {
   // so the SSE subscription can refresh without being re-created on each navigation.
   reloadRef.current = () => loadContent(routeRef.current, theme, { force: true });
 
-  // The shareable web URL an `onec://…` navigation maps to, for the long-press
+  // Pop the back stack and load the previous route. Used by the swipe-back gesture
+  // and the Android hardware back button. The previous route is cached (we just came
+  // from it), so it paints instantly. Returns true when it handled a back — the
+  // BackHandler uses that to decide whether to let the OS exit the app.
+  function goBack(): boolean {
+    const hist = historyRef.current;
+    if (!hist.length) return false;
+    const prev = hist[hist.length - 1];
+    setHistory((h) => h.slice(0, -1));
+    Haptics.selectionAsync().catch(() => {});
+    loadContent(prev, theme, { back: true });
+    return true;
+  }
+  const goBackRef = useRef(goBack);
+  goBackRef.current = goBack;
+
+  // The shareable web URL an `onno://…` navigation maps to, for the long-press
   // "Copy link / Open in browser" menu (the mobile stand-in for right-clicking a
   // link). Side-effect actions (logout/theme/post/delete/…) aren't links → null,
   // so they get no menu. Reuses navPathFor, the same map the prefetcher uses.
@@ -216,14 +298,10 @@ export default function App() {
       // a returning user skips the login screen.
       if (!authedNow) {
         const creds = await getCredentials(client.baseUrl);
-        // eslint-disable-next-line no-console
-        console.log('[auth] connect', client.baseUrl, 'savedCreds=' + !!creds);
         if (creds) {
           try {
             await client.login(creds.username, creds.password);
             authedNow = true;
-            // eslint-disable-next-line no-console
-            console.log('[auth] auto-login OK', client.baseUrl);
           } catch (e) {
             // Only forget the credentials when the server says they're WRONG (401).
             // A 403 (CSRF) or any other failure is usually transient — on localhost the
@@ -231,9 +309,7 @@ export default function App() {
             // clobbers the other's session/CSRF cookie and the first replay can 403.
             // Wiping creds there would force a manual login on every switch; instead we
             // keep them and just show the login screen so the next attempt can succeed.
-            const status = e instanceof OnecAuthError ? e.status : undefined;
-            // eslint-disable-next-line no-console
-            console.log('[auth] auto-login FAILED', client.baseUrl, 'status=' + status, String((e as any)?.message ?? e));
+            const status = e instanceof OnnoAuthError ? e.status : undefined;
             if (status === 401) await clearCredentials(client.baseUrl);
           }
         }
@@ -251,7 +327,7 @@ export default function App() {
         return;
       }
       setAuthed(true); // session live → open the SSE stream
-      await Promise.all([loadShell(th), loadContent('/', th)]);
+      await enterApp(th);
     } catch (e: any) {
       setError(String(e?.message ?? e));
       setStatus('error');
@@ -265,7 +341,7 @@ export default function App() {
     if (!client) throw new Error('Not connected to a server.');
     await client.login(username, password); // the client persists the credentials
     setAuthed(true); // session live → open the SSE stream
-    await Promise.all([loadShell(theme), loadContent('/', theme)]);
+    await enterApp(theme);
   }
 
   // Re-check the session, used when the app returns to the foreground while the
@@ -279,7 +355,7 @@ export default function App() {
       if (!(await client.me()).authenticated) return;
       setAuthed(true);
       setStatus('connecting');
-      await Promise.all([loadShell(theme), loadContent('/', theme)]);
+      await enterApp(theme);
     } catch {
       /* still signed out — stay on the login screen */
     }
@@ -288,7 +364,7 @@ export default function App() {
   // Point the app at a server: spin up a fresh client, reset per-server state,
   // leave the picker, persist it as last-used, then connect.
   function connectTo(url: string, th: 'light' | 'dark' = theme) {
-    clientRef.current = new OnecClient(url);
+    clientRef.current = new OnnoClient(url);
     setProfile(undefined);
     setShell(null);
     setContent(null);
@@ -297,6 +373,7 @@ export default function App() {
     setError('');
     setAuthed(false);
     setLoginCard(null); // belongs to the previous server; connect() refetches it
+    setHistory([]); // the back stack is per-server
     setServerUrl(url);
     setBooting(false);
     rememberServer(url).then(setServers).catch(() => {});
@@ -312,30 +389,55 @@ export default function App() {
     setError('');
     setAuthed(false);
     setLoginCard(null);
+    setHistory([]);
     loadServers().then(setServers).catch(() => {});
   }
 
-  // Startup: restore the saved theme, then auto-connect to the last-used server
-  // (or open the picker). The restored theme is threaded into connect so the
-  // first shell/content fetch is already themed — no light→dark reflow.
+  // Startup: restore the saved theme preference, then auto-connect to the last-used
+  // server (or open the picker). The *resolved* light/dark value is threaded into
+  // connect so the first shell/content fetch is already themed — no light→dark reflow.
   useEffect(() => {
     (async () => {
-      const storedTheme = await getStoredTheme();
-      if (storedTheme) setTheme(storedTheme);
+      const pref = (await getStoredThemePref()) ?? 'system';
+      setThemePref(pref);
+      const resolved: 'light' | 'dark' =
+        pref === 'system' ? (Appearance.getColorScheme() === 'dark' ? 'dark' : 'light') : pref;
       const list = await loadServers();
       setServers(list);
       const last = await getLastServer();
-      if (last) connectTo(last, storedTheme ?? theme);
+      if (last) connectTo(last, resolved);
       else setBooting(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-fetch the themed surfaces whenever the *effective* theme changes — whether
+  // from the in-app toggle, the appearance control on the picker, or (when the
+  // preference is `system`) the OS flipping light/dark while the app is open. Guarded
+  // so it never fires on the picker/login (no shell yet) or on the initial paint.
+  const themeRef = useRef(theme);
+  useEffect(() => {
+    if (themeRef.current === theme) return;
+    themeRef.current = theme;
+    if (!serverUrl || !shell) return;
+    loadShell(theme);
+    loadContent(routeRef.current, theme);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theme]);
 
   // Reset the tracked scroll offset on navigation so the fade returns to hidden
   // for the next page instead of staying stuck visible from the previous scroll.
   useEffect(() => {
     scrollY.setValue(0);
   }, [route, scrollY]);
+
+  // Android hardware back button mirrors the swipe-back gesture: pop our stack if we
+  // can, otherwise let the OS handle it (background the app). Reads the latest goBack
+  // off a ref so it stays bound once. No-op on iOS (the event never fires there).
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => goBackRef.current());
+    return () => sub.remove();
+  }, []);
 
   // While the login screen is up, re-check the session whenever the app comes back
   // to the foreground — that's how an SSO round-trip (the user taps a provider
@@ -359,7 +461,7 @@ export default function App() {
     console.log('[sse] subscribing (route', routeRef.current + ')');
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stop = subscribeUiEvents(serverUrl, (event) => {
-      // Fan out to data-driven customs (onec-list, onec-widget) so they refetch their
+      // Fan out to data-driven customs (onno-list, onno-widget) so they refetch their
       // own rows — reloading the content card alone doesn't, since they load on mount.
       publishUiEvent(event);
       // Server-rendered surfaces (detail fields, register reports) live in the card, so
@@ -377,10 +479,10 @@ export default function App() {
     };
   }, [serverUrl, authed]);
 
-  // ----- onec:// action routing (mirrors the Flutter HomeShell) -----
+  // ----- onno:// action routing (mirrors the Flutter HomeShell) -----
   function onAction(url: string) {
-    if (!url.startsWith('onec://')) return;
-    const rest = url.slice('onec://'.length);
+    if (!url.startsWith('onno://')) return;
+    const rest = url.slice('onno://'.length);
 
     if (rest === 'logout') {
       // Log out, then drop back to the server picker so the user can choose
@@ -408,18 +510,15 @@ export default function App() {
     }
     if (rest === 'theme/toggle') {
       const next = theme === 'light' ? 'dark' : 'light';
-      setTheme(next);
-      setStoredTheme(next); // remember it across launches, like the web
-      // refetch with the new theme explicitly (state update hasn't applied yet)
-      loadShell(next);
-      loadContent(route, next);
-      return;
+      setThemePref(next); // an explicit pick, so it stops following the system from here
+      setStoredThemePref(next); // remember it across launches, like the web
+      return; // the theme-change effect refetches the shell + content
     }
     if (rest.startsWith('app')) {
       const q = rest.indexOf('?');
       const params = new URLSearchParams(q >= 0 ? rest.slice(q + 1) : '');
       setProfile(params.get('profile') ?? undefined);
-      // The onec-login-form custom fires `onec://app` after a successful sign-in
+      // The onno-login-form custom fires `onno://app` after a successful sign-in
       // on the server-driven card, so this is also the "login succeeded" path —
       // mark the session live (opens the SSE stream). A no-op when already authed
       // (a plain profile switch).
@@ -495,8 +594,8 @@ export default function App() {
   // non-navigation actions (theme/profile/logout/delete), stay silent. In-content
   // navigation uses onAction directly and never buzzes.
   function fireNav(url: string) {
-    if (url.startsWith('onec://')) {
-      const rest = url.slice('onec://'.length); // '' is the Home tab (route '/')
+    if (url.startsWith('onno://')) {
+      const rest = url.slice('onno://'.length); // '' is the Home tab (route '/')
       const navigates = !/^(logout|theme\/|app|delete\/|action\/|post\/|unpost\/|open\/|redirect\/|download\/)/.test(rest);
       const target = ('/' + rest).replace('//', '/');
       if (navigates && target !== route) Haptics.selectionAsync().catch(() => {});
@@ -532,6 +631,34 @@ export default function App() {
   const selfSpaced = !!(rootDiv?.paddings || rootDiv?.margins);
   const pad = selfSpaced ? 0 : 16;
 
+  // The screen the swipe-back gesture reveals: the top of the back stack, painted
+  // statically from the client's content cache (we just came from it, so it's warm).
+  // Mirrors the live surface's padding so the reveal looks identical, then sits under
+  // it until a drag pulls it into view. Non-interactive — it becomes the live surface
+  // the instant the gesture commits and the route swaps.
+  const canGoBack = history.length > 0;
+  const prevRoute = canGoBack ? history[history.length - 1] : null;
+  const prevEnv = prevRoute
+    ? (clientRef.current?.peekContent(prevRoute, { viewport: VIEWPORT, theme, profile }) as
+        | DivCardEnvelope
+        | undefined)
+    : undefined;
+  const prevRootDiv = (prevEnv as any)?.card?.states?.[0]?.div;
+  const prevPad = prevRootDiv?.paddings || prevRootDiv?.margins ? 0 : 16;
+  const backSurface = prevEnv ? (
+    <View style={{ flex: 1, paddingHorizontal: prevPad, paddingTop: insets.top + prevPad }}>
+      <DivCard
+        key={prevRoute}
+        envelope={prevEnv}
+        theme={theme}
+        client={clientRef.current!}
+        baseUrl={serverUrl ?? undefined}
+        fire={() => {}}
+        vars={{ ...((prevEnv as any).vars ?? {}), active_path: prevRoute }}
+      />
+    </View>
+  ) : null;
+
   if (booting) {
     return (
       <View style={[styles.screen, { backgroundColor: c.bg, paddingTop: insets.top }]}>
@@ -549,6 +676,11 @@ export default function App() {
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <ConnectScreen
           theme={theme}
+          themePref={themePref}
+          onThemePref={(p) => {
+            setThemePref(p);
+            setStoredThemePref(p);
+          }}
           servers={servers}
           bottomInset={insets.bottom}
           onConnect={connectTo}
@@ -566,36 +698,40 @@ export default function App() {
       <View style={[styles.screen, { backgroundColor: c.bg, paddingTop: insets.top }]}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         {loginCard ? (
-          // The server-driven login card: password form (onec-login-form custom)
+          // The server-driven login card: password form (onno-login-form custom)
           // and/or SSO buttons, whatever this server offers. Centered + padded,
           // with a host-supplied "Change server" affordance the web doesn't need.
-          <ScrollView
-            contentContainerStyle={{
-              flexGrow: 1,
-              justifyContent: 'center',
-              paddingHorizontal: 24,
-              paddingTop: 24,
-              paddingBottom: 24 + insets.bottom,
-            }}
-            keyboardShouldPersistTaps="handled"
-            automaticallyAdjustKeyboardInsets
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Cap + centre the card so it doesn't stretch into a wide slab on an iPad.
-                The cap is wider than any phone, so phones render exactly as before. */}
-            <View style={styles.authColumn}>
-              <DivCard
-                envelope={loginCard}
-                theme={theme}
-                client={clientRef.current!}
-                baseUrl={serverUrl}
-                fire={onAction}
-              />
-              <Pressable onPress={showPicker} hitSlop={8} style={styles.changeServer}>
-                <Text style={[styles.changeServerText, { color: c.muted }]}>Change server</Text>
-              </Pressable>
-            </View>
-          </ScrollView>
+          // KeyboardAvoidingView (padding) lifts the centered card above the keyboard
+          // — automaticallyAdjustKeyboardInsets doesn't reliably scroll a centered,
+          // non-overflowing form into view, so we pad-and-recenter instead.
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <ScrollView
+              contentContainerStyle={{
+                flexGrow: 1,
+                justifyContent: 'center',
+                paddingHorizontal: 24,
+                paddingTop: 24,
+                paddingBottom: 24 + insets.bottom,
+              }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Cap + centre the card so it doesn't stretch into a wide slab on an iPad.
+                  The cap is wider than any phone, so phones render exactly as before. */}
+              <View style={styles.authColumn}>
+                <DivCard
+                  envelope={loginCard}
+                  theme={theme}
+                  client={clientRef.current!}
+                  baseUrl={serverUrl}
+                  fire={onAction}
+                />
+                <Pressable onPress={showPicker} hitSlop={8} style={styles.changeServer}>
+                  <Text style={[styles.changeServerText, { color: c.muted }]}>Change server</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
         ) : (
           // Fallback for a server with no /api/divkit/login endpoint.
           <LoginScreen
@@ -641,35 +777,48 @@ export default function App() {
             </View>
           </View>
         ) : content ? (
-          <Animated.ScrollView
-            contentContainerStyle={{ paddingHorizontal: pad, paddingTop: insets.top + pad, paddingBottom: pad + insets.bottom + (hasBottomBar ? NAV_RESERVE : 0) }}
-            scrollIndicatorInsets={{ top: insets.top }}
-            // Keep form fields above the keyboard: inset + scroll the focused input
-            // into view (iOS). Without this, lower fields on entity forms hide behind it.
-            automaticallyAdjustKeyboardInsets
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="interactive"
-            scrollEnabled={!scrollLocked}
-            onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
-            scrollEventThrottle={16}
+          // Wraps the live surface for iOS-style swipe-to-go-back: a left-edge drag
+          // pulls this screen aside to reveal `backSurface` underneath. A no-op when
+          // the back stack is empty (canGoBack=false). The bottom bar + top fade are
+          // siblings below, so they stay put during the drag, like native chrome.
+          <SwipeBackArea
+            width={SCREEN_W}
+            bg={c.bg}
+            canGoBack={canGoBack}
+            routeKey={route}
+            onBack={goBack}
+            back={backSurface}
           >
-            <DivCard
-              key={route}
-              envelope={content}
-              theme={theme}
-              client={clientRef.current!}
-              baseUrl={serverUrl}
-              fire={onAction}
-              prefetch={prefetchContent}
-              linkFor={linkFor}
-              refresh={() => loadContent(route)}
-              lockScroll={setScrollLocked}
-              vars={{ ...((content as any).vars ?? {}), ...navVars }}
-            />
-            {status === 'connecting' && (
-              <View style={{ paddingVertical: 16 }}><ActivityIndicator /></View>
-            )}
-          </Animated.ScrollView>
+            <Animated.ScrollView
+              contentContainerStyle={{ paddingHorizontal: pad, paddingTop: insets.top + pad, paddingBottom: pad + insets.bottom + (hasBottomBar ? NAV_RESERVE : 0) }}
+              scrollIndicatorInsets={{ top: insets.top }}
+              // Keep form fields above the keyboard: inset + scroll the focused input
+              // into view (iOS). Without this, lower fields on entity forms hide behind it.
+              automaticallyAdjustKeyboardInsets
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+              scrollEnabled={!scrollLocked}
+              onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+              scrollEventThrottle={16}
+            >
+              <DivCard
+                key={route}
+                envelope={content}
+                theme={theme}
+                client={clientRef.current!}
+                baseUrl={serverUrl}
+                fire={onAction}
+                prefetch={prefetchContent}
+                linkFor={linkFor}
+                refresh={() => loadContent(route)}
+                lockScroll={setScrollLocked}
+                vars={{ ...((content as any).vars ?? {}), ...navVars }}
+              />
+              {status === 'connecting' && (
+                <View style={{ paddingVertical: 16 }}><ActivityIndicator /></View>
+              )}
+            </Animated.ScrollView>
+          </SwipeBackArea>
         ) : null}
 
         {/* Content scrolls behind the notch; this keeps the safe area opaque and

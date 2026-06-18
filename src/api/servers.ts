@@ -1,4 +1,4 @@
-// Saved-server store for the connection switcher. Persists the list of OneC
+// Saved-server store for the connection switcher. Persists the list of Onno
 // servers the user has connected to, plus the last one used, so the app can
 // auto-connect on startup and offer a picker. Backed by AsyncStorage (included
 // in Expo Go; no native rebuild needed).
@@ -7,7 +7,7 @@
 // `config.ts` (e.g. the Rentals example is `http://localhost:8899`).
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ONEC_BASE_URL } from './config';
+import { ONNO_BASE_URL } from './config';
 
 export interface ServerEntry {
   /** Normalized base URL, no trailing slash. Acts as the identity of the entry. */
@@ -16,8 +16,8 @@ export interface ServerEntry {
   label: string;
 }
 
-const SERVERS_KEY = 'onec.servers';
-const LAST_KEY = 'onec.lastServer';
+const SERVERS_KEY = 'onno.servers';
+const LAST_KEY = 'onno.lastServer';
 
 /**
  * Coerce free-form input into a base URL we can talk to, or null if it can't
@@ -107,7 +107,7 @@ export async function loadServers(): Promise<ServerEntry[]> {
   } catch {
     /* fall through to the seed */
   }
-  const seed = normalizeUrl(ONEC_BASE_URL);
+  const seed = normalizeUrl(ONNO_BASE_URL);
   return seed ? [entry(seed)] : [];
 }
 

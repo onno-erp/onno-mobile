@@ -1,14 +1,15 @@
-// onec-list — a catalog/document browse list. The server emits a descriptor
+// onno-list — a catalog/document browse list. The server emits a descriptor
 // (columns, sort, searchability, routes); the widget fetches rows from
 // GET /api/list/{kind}/{name} and renders a bordered, horizontally-scrollable
-// table. Row tap opens onec://{kind}/{name}/{id}. Port of onec_list.dart.
+// table. Row tap opens onno://{kind}/{name}/{id}. Port of the Flutter client's list custom.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import type { Row } from '../../api/onecClient';
+import type { Row } from '../../api/onnoClient';
 import { applyFormat, isAvatarWidget, isImageWidget, looksLikeImageUrl } from '../format';
 import { ContextMenuArea } from '../longPress';
-import { colors, isDark, type ThemeColors } from '../theme';
+import type { ContextMenuItem } from '../../ui/contextMenu';
+import { colors, type ThemeColors } from '../theme';
 import type { CustomRenderer, DivHost } from '../types';
 import { useLiveRefresh } from '../useLiveRefresh';
 import { LucideIcon } from './lucide';
@@ -44,7 +45,37 @@ function cellText(row: Row, col: Col): string {
   return applyFormat(text, col.format) ?? text;
 }
 
-function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) {
+// A custom list action declared by the server (desc.actions): `toolbar` (list-level) or
+// `row` (per-record). A `server` action POSTs via onno://action/…; a navigate action routes
+// its `url` (with `{id}` filled). Row actions can be tuned per-row via `row._actions[key]`.
+interface ListAction {
+  key: string;
+  label: string;
+  icon?: string;
+  scope: 'toolbar' | 'row';
+  server: boolean;
+  url?: string;
+  kind: string;
+  name: string;
+}
+
+type ResolvedAction = { url: string; label: string; icon?: string; enabled: boolean };
+
+/** Resolve a row action against the row's optional `_actions[key]` override; null when hidden. */
+function resolveRowAction(a: ListAction, row: Row): ResolvedAction | null {
+  const ov = (row._actions as Record<string, any> | undefined)?.[a.key];
+  if (ov?.visible === false) return null;
+  const id = row._id != null ? String(row._id) : '';
+  const url = a.server ? `onno://action/${a.kind}/${a.name}/${a.key}/${id}` : (a.url ?? '').replace('{id}', id);
+  return { url, label: ov?.label ?? a.label, icon: ov?.icon ?? a.icon, enabled: ov?.enabled !== false };
+}
+
+/** The action url for a toolbar (list-level, no row) action. */
+function toolbarActionUrl(a: ListAction): string {
+  return a.server ? `onno://action/${a.kind}/${a.name}/${a.key}` : a.url ?? '';
+}
+
+function OnnoList({ desc, host }: { desc: Record<string, any>; host: DivHost }) {
   const c = colors(host.theme);
   const kind = (desc.kind as string) ?? 'catalogs';
   const name = (desc.name as string) ?? '';
@@ -52,6 +83,11 @@ function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) 
   const searchable = desc.searchable === true;
   const newUrl = desc.newUrl as string | undefined;
   const columns: Col[] = Array.isArray(desc.columns) ? desc.columns : [];
+  // Custom server-declared actions: toolbar buttons (list header) + per-row actions
+  // (inline trailing buttons + the long-press menu).
+  const toolbarActions = useMemo<ListAction[]>(() => (Array.isArray(desc.actions) ? desc.actions : []).filter((a: ListAction) => a.scope === 'toolbar'), [desc.actions]);
+  const rowActions = useMemo<ListAction[]>(() => (Array.isArray(desc.actions) ? desc.actions : []).filter((a: ListAction) => a.scope === 'row'), [desc.actions]);
+  const actionColW = rowActions.length ? rowActions.length * 38 + 8 : 0;
 
   // Optional map view: the server attaches a `map` config (geo columns) to lists whose
   // records have a location. When present, offer a List/Map toggle (web: list.map).
@@ -141,18 +177,18 @@ function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) 
   }
 
   const widths = useMemo(() => columns.map((col, i) => colWidth(col, i === 0)), [columns]);
-  const tableWidth = useMemo(() => widths.reduce((a, b) => a + b, 0) + 24, [widths]);
+  const tableWidth = useMemo(() => widths.reduce((a, b) => a + b, 0) + 24 + actionColW, [widths, actionColW]);
   // Stable so memoized rows don't re-render as the list grows.
   const onOpen = useCallback(
     (row: Row) => {
-      if (row._id != null) host.fire(`onec://${kind}/${name}/${row._id}`);
+      if (row._id != null) host.fire(`onno://${kind}/${name}/${row._id}`);
     },
     [host, kind, name],
   );
   // Warm the detail card on touch-down so it's usually ready by the time the tap lands.
   const onPrefetch = useCallback(
     (row: Row) => {
-      if (row._id != null) host.prefetch?.(`onec://${kind}/${name}/${row._id}`);
+      if (row._id != null) host.prefetch?.(`onno://${kind}/${name}/${row._id}`);
     },
     [host, kind, name],
   );
@@ -170,7 +206,7 @@ function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) 
     return () => cancelAnimationFrame(raf);
   }, [limit, rows.length]);
   // A neutral row-press highlight (`surface` collapses into `card` in dark, so pick per theme).
-  const rowPress = isDark(c) ? '#262626' : '#F3F4F6';
+  const rowPress = c.primarySoft;
   const title = (desc.title as string) ?? name;
   // First fetch (nothing to show yet) → full spinner. A re-sort/search of an
   // already-loaded list keeps its rows on screen and refreshes them in place.
@@ -188,7 +224,7 @@ function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) 
       {/* Toolbar (web parity): the Table/Map segmented control sits inline with the
           search box and New button. Search is table-only; a flex spacer keeps New
           right-aligned in map mode. */}
-      {(hasMap || searchable || newUrl) && (
+      {(hasMap || searchable || newUrl || toolbarActions.length > 0) && (
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
           {hasMap && (
             <View style={{ flexDirection: 'row', height: 40, alignItems: 'center', borderWidth: 1, borderColor: c.border, borderRadius: 8, backgroundColor: c.surface, padding: 2 }}>
@@ -222,6 +258,15 @@ function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) 
           ) : (
             <View style={{ flex: 1 }} />
           )}
+          {toolbarActions.map((a) => (
+            <Touchable
+              key={a.key}
+              onPress={() => host.fire(toolbarActionUrl(a))}
+              style={{ width: 44, height: 40, borderRadius: 8, borderWidth: 1, borderColor: c.border, backgroundColor: c.card, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <LucideIcon name={a.icon || 'zap'} size={18} color={c.text} />
+            </Touchable>
+          ))}
           {newUrl && (
             <Touchable style={{ width: 44, height: 40, borderRadius: 8, backgroundColor: c.accentBg, alignItems: 'center', justifyContent: 'center' }} onPress={() => host.fire(newUrl)}>
               <LucideIcon name="plus" size={20} color={c.accentFg} />
@@ -254,6 +299,7 @@ function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) 
                     <LucideIcon name={sortColumn !== col.columnName ? 'chevrons-up-down' : sortDesc ? 'arrow-down' : 'arrow-up'} size={13} color={c.muted} />
                   </Touchable>
                 ))}
+                {actionColW > 0 ? <View style={{ width: actionColW }} /> : null}
               </View>
               {rows.slice(0, limit).map((row, r) => (
                 <RowItem
@@ -268,7 +314,9 @@ function OnecList({ desc, host }: { desc: Record<string, any>; host: DivHost }) 
                   onOpen={onOpen}
                   onPrefetch={onPrefetch}
                   host={host}
-                  rowUrl={row._id != null ? `onec://${kind}/${name}/${row._id}` : undefined}
+                  rowUrl={row._id != null ? `onno://${kind}/${name}/${row._id}` : undefined}
+                  rowActions={rowActions}
+                  actionColW={actionColW}
                 />
               ))}
             </View>
@@ -329,6 +377,8 @@ const RowItem = React.memo(function RowItem({
   onPrefetch,
   host,
   rowUrl,
+  rowActions,
+  actionColW,
 }: {
   row: Row;
   columns: Col[];
@@ -341,13 +391,29 @@ const RowItem = React.memo(function RowItem({
   onPrefetch: (row: Row) => void;
   host: DivHost;
   rowUrl?: string;
+  rowActions: ListAction[];
+  actionColW: number;
 }) {
-  // Long-press a row = the web's right-click on a record link: a Copy link / Open
-  // in browser menu for that record, slide-to-select like an iOS context menu.
+  // The record's actions (post/edit/custom…), resolved against this row's per-row state.
+  const resolved = useMemo(
+    () => rowActions.map((a) => resolveRowAction(a, row)).filter((r): r is ResolvedAction => r != null),
+    [rowActions, row],
+  );
+  // The same actions feed the long-press menu (alongside Open / Share / Copy link).
+  const extraItems = useMemo<ContextMenuItem[]>(
+    () => resolved.filter((r) => r.enabled).map((r) => ({ label: r.label, icon: r.icon, onPress: () => host.fire(r.url) })),
+    [resolved, host],
+  );
+
+  // Long-press a row = the web's right-click on a record: Open, its actions, Share, Copy
+  // link, Open in browser — slide-to-select like an iOS context menu. The same actions
+  // also sit inline as a trailing button column.
   return (
-    <ContextMenuArea host={host} url={rowUrl}>
+    <ContextMenuArea host={host} url={rowUrl} extraItems={extraItems}>
       <Pressable
-        style={({ pressed }) => ({ flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: last ? 0 : 1, borderBottomColor: c.border, backgroundColor: pressed ? rowPress : 'transparent' })}
+        // Fixed minHeight + centered content so a row with an action button is the same
+        // height as a text-only one (the button defines the height; padding is trimmed to fit).
+        style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: last ? 0 : 1, borderBottomColor: c.border, backgroundColor: pressed ? rowPress : 'transparent' })}
         android_ripple={{ color: rowPress }}
         onPress={() => onOpen(row)}
         onPressIn={() => onPrefetch(row)}
@@ -357,12 +423,27 @@ const RowItem = React.memo(function RowItem({
             <Cell row={row} col={col} first={i === 0} c={c} baseUrl={baseUrl} />
           </View>
         ))}
+        {actionColW > 0 ? (
+          <View style={{ width: actionColW, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 2 }}>
+            {resolved.map((r, i) => (
+              <Touchable
+                key={i}
+                disabled={!r.enabled}
+                hitSlop={8}
+                onPress={() => host.fire(r.url)}
+                style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', opacity: r.enabled ? 1 : 0.4 }}
+              >
+                <LucideIcon name={r.icon || 'zap'} size={18} color={c.primary} />
+              </Touchable>
+            ))}
+          </View>
+        ) : null}
       </Pressable>
     </ContextMenuArea>
   );
 });
 
-export const onecList: CustomRenderer = ({ block, host }) => {
+export const onnoList: CustomRenderer = ({ block, host }) => {
   const desc = (block.custom_props?.list as Record<string, any>) ?? {};
-  return <OnecList desc={desc} host={host} />;
+  return <OnnoList desc={desc} host={host} />;
 };

@@ -1,4 +1,4 @@
-// Descriptor + data plumbing for the dashboard widgets (onec-widget). Port of the
+// Descriptor + data plumbing for the dashboard widgets (onno-widget). Port of the
 // web SPA's lib/widget-data.ts: one place that buckets/sums a widget's rows into
 // single-number aggregates or time-bucketed, optionally multi-series datasets, so
 // every widget orders and aggregates identically.

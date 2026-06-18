@@ -1,4 +1,4 @@
-// onec-widget — a dashboard tile. The server ships a descriptor
+// onno-widget — a dashboard tile. The server ships a descriptor
 // (custom_props.widget); each widget fetches its own rows and renders. Port of
 // the web SPA's widget-bridge.tsx + the per-type widget components. All types are
 // rendered natively: list / stat / sparkline / gauge / chart (bar/line/area/
@@ -6,7 +6,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
-import type { Row } from '../../api/onecClient';
+import type { Row } from '../../api/onnoClient';
 import {
   formatAmount,
   formatCompact,
@@ -118,7 +118,7 @@ const Empty = ({ c, text = 'No data yet.', height }: { c: ThemeColors; text?: st
 );
 
 const openRow = (host: DivHost, meta: WidgetMeta, row: Row) => {
-  if (row._id != null) host.fire(`onec://${meta.kind}/${meta.entityName}/${row._id}`);
+  if (row._id != null) host.fire(`onno://${meta.kind}/${meta.entityName}/${row._id}`);
 };
 
 // ----- list (recent records) -----
@@ -659,7 +659,7 @@ const MapWidget: CustomRenderer = ({ customProps, host }) => {
     const out: GeoShape[] = [];
     for (const row of rows) {
       const label = resolveText(row, { fields: splitFields(meta.titleField), fallbacks: ['_description', '_number', '_code', 'name'] });
-      const href = row._id != null ? `onec://${meta.kind}/${meta.entityName}/${row._id}` : undefined;
+      const href = row._id != null ? `onno://${meta.kind}/${meta.entityName}/${row._id}` : undefined;
       out.push(...shapesFromRow(row, source, { label, href }));
     }
     return out;
@@ -683,7 +683,7 @@ const MapWidget: CustomRenderer = ({ customProps, host }) => {
 
 // ----- registry -----
 
-export const onecWidget: CustomRenderer = (p) => {
+export const onnoWidget: CustomRenderer = (p) => {
   const meta = new WidgetMeta((p.customProps.widget as Record<string, any>) ?? {});
   switch (meta.widgetType) {
     case 'list': return <ListWidget {...p} />;

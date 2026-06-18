@@ -1,5 +1,5 @@
-// HTTP client for one OneC server — a TypeScript port of the Flutter client's
-// `onec_client.dart`, trimmed to what the RN app needs so far (auth + DivKit
+// HTTP client for one Onno server — a TypeScript port of the Flutter client's
+// HTTP client, trimmed to what the RN app needs so far (auth + DivKit
 // card fetch).
 //
 // CSRF: the server sets a non-HttpOnly `XSRF-TOKEN` cookie and requires it
@@ -11,7 +11,7 @@
 // ensureCsrf), which works on every platform without a native cookie module.
 
 import { toast } from '../ui/toast';
-import { clearCredentials, saveCredentials } from './credentials';
+import { saveCredentials } from './credentials';
 
 export interface AuthUser {
   authenticated: boolean;
@@ -51,14 +51,14 @@ export interface UploadFile {
   type: string;
 }
 
-export class OnecAuthError extends Error {
+export class OnnoAuthError extends Error {
   /** HTTP status that caused it — 401 = bad credentials, 403 = CSRF rejection, etc. Lets
    *  callers distinguish "these creds are wrong" (forget them) from a transient/CSRF failure. */
   constructor(message: string, public status?: number) {
     super(message);
   }
 }
-export class OnecRequestError extends Error {
+export class OnnoRequestError extends Error {
   constructor(public path: string, public status: number) {
     super(`Request to ${path} failed (HTTP ${status})`);
   }
@@ -82,7 +82,7 @@ export class ApiError extends Error {
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
-export class OnecClient {
+export class OnnoClient {
   private csrf: string | null = null;
   /** Per-server stale-while-revalidate cache for GET reads (content/list/rows).
    *  Lets a screen paint last-known data instantly; cleared on any successful
@@ -144,7 +144,7 @@ export class OnecClient {
   /**
    * Obtain the session's CSRF token. Browsers read it from the non-HttpOnly XSRF-TOKEN
    * cookie (see captureCsrf), but native fetch on iOS never exposes Set-Cookie, so we
-   * ask the server for it via `GET /api/auth/csrf` (added in onec-auth-starter). Best
+   * ask the server for it via `GET /api/auth/csrf` (added in onno-auth-starter). Best
    * effort: on failure the pending mutation just fails loudly with the real error.
    */
   private async ensureCsrf(): Promise<void> {
@@ -195,7 +195,7 @@ export class OnecClient {
 
   private async json<T>(path: string, query?: Record<string, string | undefined>): Promise<T> {
     const res = await this.request(path, { query });
-    if (res.status !== 200) throw new OnecRequestError(path, res.status);
+    if (res.status !== 200) throw new OnnoRequestError(path, res.status);
     return (await res.json()) as T;
   }
 
@@ -238,31 +238,34 @@ export class OnecClient {
       const user = normalizeUser(await res.json());
       // Remember the credentials so the next launch can auto sign in (the session
       // cookie won't survive a relaunch on iOS). Centralized here so every login
-      // path persists consistently — the native fallback form, the onec-login-form
+      // path persists consistently — the native fallback form, the onno-login-form
       // custom on the server-driven card, and the auto-login replay on connect.
       await saveCredentials(this.baseUrl, username, password);
       return user;
     }
-    if (res.status === 401) throw new OnecAuthError('Invalid username or password', 401);
+    if (res.status === 401) throw new OnnoAuthError('Invalid username or password', 401);
     // 403 here is a CSRF rejection (the server enforces it), not bad credentials —
     // it means the app couldn't read/echo the XSRF-TOKEN cookie for this server.
-    if (res.status === 403) throw new OnecAuthError('Security check failed (CSRF, HTTP 403) — the app couldn’t read this server’s XSRF-TOKEN cookie.', 403);
-    throw new OnecAuthError(`Login failed (HTTP ${res.status})`, res.status);
+    if (res.status === 403) throw new OnnoAuthError('Security check failed (CSRF, HTTP 403) — the app couldn’t read this server’s XSRF-TOKEN cookie.', 403);
+    throw new OnnoAuthError(`Login failed (HTTP ${res.status})`, res.status);
   }
 
   async logout(): Promise<void> {
+    // End the server session, but KEEP the saved credentials: returning to this
+    // server from the picker then signs straight back in (the connect() replay
+    // re-uses them) instead of stopping at the login screen. Forgetting a server's
+    // credentials for good is the "remove server" path in the picker, which clears
+    // them explicitly. Best-effort — we're leaving this server regardless.
     try {
       await this.request('/api/auth/logout', { method: 'POST' });
-    } finally {
-      // Forget the saved credentials too — an explicit logout means "don't auto
-      // sign me back in", so the next connect must land on the login screen.
-      await clearCredentials(this.baseUrl);
+    } catch {
+      /* ignore — the session is being abandoned either way */
     }
   }
 
   /**
    * The server-driven login screen as a DivKit card (`GET /api/divkit/login`). Public — it renders
-   * before sign-in. Describes whatever this server offers: a password sub-form (the `onec-login-form`
+   * before sign-in. Describes whatever this server offers: a password sub-form (the `onno-login-form`
    * custom) and/or one button per SSO provider. The client just renders + routes its actions.
    */
   loginCard(o: { theme?: 'light' | 'dark' } = {}): Promise<{ templates?: Record<string, unknown>; card: unknown }> {
@@ -298,7 +301,7 @@ export class OnecClient {
    *  revisits; an explicit refresh ignores it. */
   private freshAt(key: string): boolean {
     const e = this.cache.get(key);
-    return !!e && Date.now() - e.ts < OnecClient.CACHE_TTL_MS;
+    return !!e && Date.now() - e.ts < OnnoClient.CACHE_TTL_MS;
   }
   freshContent(path: string, o: { viewport?: string; theme?: string; profile?: string } = {}) {
     return this.freshAt(this.contentKey(path, o));
@@ -347,6 +350,24 @@ export class OnecClient {
     });
   }
 
+  /**
+   * The deployment's branding (`GET /api/branding`): app name, logo, and the per-mode brand
+   * palette. The palette carries only the slots the consumer overrode (e.g. vetovet → green
+   * `primary`); absent slots fall back to the app defaults. Returns null on older servers (404)
+   * so the caller just keeps the default theme.
+   */
+  async branding(): Promise<{
+    appName?: string;
+    logoUrl?: string;
+    palette?: { light?: Record<string, string>; dark?: Record<string, string> };
+  } | null> {
+    try {
+      return await this.json('/api/branding');
+    } catch {
+      return null;
+    }
+  }
+
   // ----- generic entity REST (used by the custom widgets) -----
 
   /** Paged list rows: `GET /api/list/{kind}/{name}` → `{ total, offset, rows }`. */
@@ -379,7 +400,7 @@ export class OnecClient {
   ): Promise<Row[]> {
     const path = o.registerPath ? `/api/registers/${name}/${o.registerPath}` : `/api/${kind}/${name}`;
     const res = await this.request(path, { query: { from: o.from, to: o.to } });
-    if (res.status !== 200) throw new OnecRequestError(path, res.status);
+    if (res.status !== 200) throw new OnnoRequestError(path, res.status);
     const result = asRows(await res.json());
     this.store(this.rowsKey(kind, name, o), result);
     return result;
@@ -440,6 +461,13 @@ export class OnecClient {
     return this.json<any>(`/api/comments/${kind}/${name}/${id}`).then(asRows);
   }
 
+  /** `@`-mention typeahead across every readable catalog/document: `GET /api/mentions?q=`.
+   *  Each row is `{ kind, name, entity, id, display, avatarUrl }`. 404 when mentions are
+   *  disabled — the composer just posts plain text in that case. */
+  searchMentions(q: string): Promise<Row[]> {
+    return this.json<any>('/api/mentions', { q }).then(asRows);
+  }
+
   async addComment(kind: string, name: string, id: string, body: string): Promise<Row> {
     const res = await this.request(`/api/comments/${kind}/${name}/${id}`, {
       method: 'POST',
@@ -454,7 +482,7 @@ export class OnecClient {
     await this.ensureOk(res, `/api/comments/${commentId}`);
   }
 
-  // ----- app settings (framework @Constant values, admin-only — onec-constants) -----
+  // ----- app settings (framework @Constant values, admin-only — onno-constants) -----
 
   /** All editable app settings: `GET /api/settings`. */
   getSettings(): Promise<SettingMeta[]> {
@@ -467,7 +495,7 @@ export class OnecClient {
     await this.ensureOk(res, '/api/settings');
   }
 
-  // ----- page-level action buttons (PageBuilder.actions — onec-actions) -----
+  // ----- page-level action buttons (PageBuilder.actions — onno-actions) -----
 
   /**
    * Run a page-level action button: `POST /api/divkit/page-action?route=&key=&profile=`. The server
@@ -485,7 +513,7 @@ export class OnecClient {
     return { message: m?.message, navigate: m?.navigate, refresh: m?.refresh === true };
   }
 
-  // ----- binary uploads (image/file field widgets — onec-form media controls) -----
+  // ----- binary uploads (image/file field widgets — onno-form media controls) -----
 
   /**
    * Stream a file to the framework's binary-upload endpoint (`POST /api/media`) and resolve to its

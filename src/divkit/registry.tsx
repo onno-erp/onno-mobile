@@ -1,5 +1,5 @@
-// Registry for `onec-*` div-custom blocks — the RN counterpart of the Flutter
-// client's OnecCustomHandler. Renderers are registered in ./customs.
+// Registry for `onno-*` div-custom blocks — the RN counterpart of the Flutter
+// client's OnnoCustomHandler. Renderers are registered in ./customs.
 
 import React from 'react';
 import { Text, View } from 'react-native';
