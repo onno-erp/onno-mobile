@@ -1,0 +1,49 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.onnotelegramlogin'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(project(':expo-modules-core').projectDir.absolutePath, 'ExpoModulesCorePlugin.gradle')
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+android {
+  namespace 'expo.modules.onnotelegramlogin'
+  compileSdkVersion safeExtGet('compileSdkVersion', 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet('minSdkVersion', 24)
+    targetSdkVersion safeExtGet('targetSdkVersion', 35)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = '17'
+  }
+}
+
+dependencies {
+  // Telegram's official Android login SDK — TelegramMessenger/telegram-login-android. It's published
+  // to GitHub Packages, which requires a personal access token, so it can't be an unconditional
+  // dependency of this repo. To enable it:
+  //   1. Add the GitHub Packages maven repo (with gpr.user / gpr.key credentials) to your app's
+  //      android/settings.gradle — see modules/onno-telegram-login/README.md.
+  //   2. Uncomment the line below.
+  // The Kotlin bridge binds to the SDK via a reflection shim, so it compiles and the app builds with
+  // this commented out (the module then reports "unavailable" and the app uses the web SSO flow).
+  //
+  //   implementation 'org.telegram:login-sdk:1.0.0'
+
+  implementation 'androidx.browser:browser:1.8.0' // Custom Tabs fallback when Telegram isn't installed
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

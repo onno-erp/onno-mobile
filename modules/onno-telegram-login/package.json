@@ -1,0 +1,9 @@
+{
+  "name": "onno-telegram-login",
+  "version": "0.1.0",
+  "description": "Native Login with Telegram (official SDK) for the Onno mobile client",
+  "main": "index.ts",
+  "author": "Onno",
+  "license": "MIT",
+  "private": true
+}
