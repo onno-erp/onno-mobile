@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Lets the SDK detect/launch the Telegram app on Android 11+ (package visibility). The callback
+       intent-filter (app link / custom scheme) is added to the app's MainActivity by the Expo config
+       plugin: plugins/withTelegramLogin.js. -->
+  <queries>
+    <package android:name="org.telegram.messenger" />
+    <package android:name="org.telegram.messenger.web" />
+  </queries>
+</manifest>
