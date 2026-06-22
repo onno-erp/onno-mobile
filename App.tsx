@@ -69,7 +69,7 @@ function navPathFor(url: string): string | null {
   if (
     rest === 'logout' ||
     rest === 'theme/toggle' ||
-    rest.startsWith('auth/sso/') ||
+    rest.startsWith('auth/') ||
     rest.startsWith('app') ||
     rest.startsWith('delete/') ||
     rest.startsWith('action/') ||
@@ -597,6 +597,19 @@ export default function App() {
       const target = rest.slice(prefix.length);
       const href = /^https?:\/\//i.test(target) ? target : `${serverUrl?.replace(/\/$/, '')}/${target.replace(/^\//, '')}`;
       Linking.openURL(href).catch(() => toast.error("Couldn't open the link"));
+      return;
+    }
+    if (rest === 'auth/password' || rest === 'auth/back') {
+      // The server-driven login picker (when a server offers BOTH a password form and SSO): choosing
+      // "password" advances to the credentials step (?step=password); "back" returns to the picker.
+      // Re-fetch the login card for that step — NOT a page navigation (which would 404 on /auth/password).
+      const client = clientRef.current;
+      if (client) {
+        client
+          .loginCard({ theme, step: rest === 'auth/password' ? 'password' : undefined })
+          .then((c) => setLoginCard(c as DivCardEnvelope))
+          .catch(() => toast.error("Couldn't open the password form"));
+      }
       return;
     }
     loadContent(('/' + rest).replace('//', '/'));

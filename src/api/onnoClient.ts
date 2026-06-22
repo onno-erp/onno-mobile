@@ -330,8 +330,8 @@ export class OnnoClient {
    * before sign-in. Describes whatever this server offers: a password sub-form (the `onno-login-form`
    * custom) and/or one button per SSO provider. The client just renders + routes its actions.
    */
-  loginCard(o: { theme?: 'light' | 'dark' } = {}): Promise<{ templates?: Record<string, unknown>; card: unknown }> {
-    return this.json('/api/divkit/login', { theme: o.theme ?? 'light' });
+  loginCard(o: { theme?: 'light' | 'dark'; step?: string } = {}): Promise<{ templates?: Record<string, unknown>; card: unknown }> {
+    return this.json('/api/divkit/login', { theme: o.theme ?? 'light', step: o.step });
   }
 
   // ----- read cache (stale-while-revalidate) -----
