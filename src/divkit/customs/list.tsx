@@ -356,11 +356,24 @@ function Cell({ row, col, first, c, baseUrl }: { row: Row; col: Col; first: bool
     }
   }
   const isRef = Object.prototype.hasOwnProperty.call(row, `${col.columnName}_ref`);
-  return (
+  const text = (
     <Text numberOfLines={1} style={{ fontSize: 14, color: isRef ? c.primary : first ? c.text : c.muted, fontWeight: first ? '500' : '400' }}>
       {cellText(row, col)}
     </Text>
   );
+  // A Ref to an entity with an avatar: the server resolves it to `{col}_avatar`
+  // (a URL) on the row. Draw it as a small round photo beside the display text.
+  const avatar = row[`${col.columnName}_avatar`];
+  if (typeof avatar === 'string' && looksLikeImageUrl(avatar)) {
+    const uri = avatar.startsWith('/') ? `${baseUrl ?? ''}${avatar}` : avatar;
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Image source={{ uri }} style={{ width: 24, height: 24, borderRadius: 12 }} />
+        {text}
+      </View>
+    );
+  }
+  return text;
 }
 
 // A single table row. Memoized so progressive reveal (and any list re-render)
