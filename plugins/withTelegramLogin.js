@@ -29,9 +29,11 @@ const {
   withInfoPlist,
   withEntitlementsPlist,
   withAndroidManifest,
-  withXcodeProject,
+  withDangerousMod,
   AndroidConfig,
 } = require('@expo/config-plugins');
+const fs = require('fs');
+const path = require('path');
 
 const TELEGRAM_QUERY_SCHEMES = ['tg', 'tgapi'];
 const ANDROID_PATH = '/tglogin';
@@ -47,7 +49,7 @@ const domainFor = (appId) => `app${appId}-login.tg.dev`;
 const iosRedirectFor = (appId) => `https://${domainFor(appId)}`;
 const androidRedirectFor = (appId) => `https://${domainFor(appId)}${ANDROID_PATH}`;
 
-function withIos(config, { customScheme, universalLinkAppIds, defaultClientId, defaultAppId, scopes }) {
+function withIos(config, { customScheme, universalLinkAppIds, defaultClientId, defaultAppId, scopes, appLinksDevMode, forceWebAuth }) {
   config = withInfoPlist(config, (cfg) => {
     const plist = cfg.modResults;
 
@@ -57,9 +59,14 @@ function withIos(config, { customScheme, universalLinkAppIds, defaultClientId, d
     plist.TelegramLoginScopes = scopes;
     plist.TelegramLoginCustomScheme = customScheme;
 
-    // canOpenURL("tg://…") allow-list.
+    // canOpenURL("tg://…") allow-list. With `forceWebAuth`, OMIT these so the SDK's
+    // `canOpenURL("tg://resolve")` is false → it skips the cross-app (Telegram app + universal-link
+    // return) path and uses the in-app ASWebAuthenticationSession, whose https callback captures the
+    // redirect WITHOUT an associated domain. Universal links are unreliable on dev/ad-hoc builds, so
+    // this is the robust path for sideloaded testing; turn it off for an App Store / TestFlight build
+    // where the nicer native-app flow works.
     const queries = new Set(plist.LSApplicationQueriesSchemes || []);
-    TELEGRAM_QUERY_SCHEMES.forEach((s) => queries.add(s));
+    TELEGRAM_QUERY_SCHEMES.forEach((s) => (forceWebAuth ? queries.delete(s) : queries.add(s)));
     plist.LSApplicationQueriesSchemes = Array.from(queries);
 
     // The custom scheme — always registered (the any-bot redirect).
@@ -71,12 +78,16 @@ function withIos(config, { customScheme, universalLinkAppIds, defaultClientId, d
     return cfg;
   });
 
-  // Associated Domains for each Universal-Link bot you opt into.
+  // Associated Domains for each Universal-Link bot you opt into. `appLinksDevMode` appends
+  // `?mode=developer`, which (with "Associated Domains Development" enabled on the device) makes iOS
+  // fetch the AASA directly instead of via Apple's CDN — REQUIRED for the tg.dev link to auto-open a
+  // dev/sideloaded build. MUST be off for an App Store / TestFlight build.
   if (universalLinkAppIds.length) {
+    const suffix = appLinksDevMode ? '?mode=developer' : '';
     config = withEntitlementsPlist(config, (cfg) => {
       const key = 'com.apple.developer.associated-domains';
       const domains = new Set(cfg.modResults[key] || []);
-      universalLinkAppIds.forEach((id) => domains.add(`applinks:${domainFor(id)}`));
+      universalLinkAppIds.forEach((id) => domains.add(`applinks:${domainFor(id)}${suffix}`));
       cfg.modResults[key] = Array.from(domains);
       return cfg;
     });
@@ -120,71 +131,32 @@ function withAndroid(config, { customScheme, universalLinkAppIds, defaultClientI
   });
 }
 
-// Link the Telegram login SDK (SPM) into the iOS app target so `expo prebuild` / `eas build` produce a
-// binary where native login actually runs. node-xcode 3.x has no SPM helper, so we add the pbxproj
-// objects by hand: an XCRemoteSwiftPackageReference, an XCSwiftPackageProductDependency on the app
-// target, and a PBXBuildFile in its Frameworks phase (the bit that actually links it). Idempotent —
-// re-running prebuild won't add it twice.
-function withTelegramSpm(config, { spmRepo, spmMinVersion }) {
-  return withXcodeProject(config, (cfg) => {
-    const project = cfg.modResults;
-    const objects = project.hash.project.objects;
-    const ensure = (isa) => (objects[isa] = objects[isa] || {});
+// Make Telegram's login SDK importable by the native bridge. The bridge does `#if canImport(TelegramLogin)`
+// and compiles in the `OnnoTelegramLogin` *Pod* target — which can't import a Swift Package attached to
+// the app target (that left `canImport` false and native login "unavailable" in every build). The SDK
+// ships SPM-only, but it's dependency-free pure Swift source, so we consume it as a CocoaPods source pod
+// (vendor/TelegramLogin.podspec → clones Telegram's git) and depend on it from OnnoTelegramLogin.podspec.
+// This step just wires that pod into the Podfile's app target. Idempotent.
+function withTelegramPodSpm(config) {
+  return withDangerousMod(config, [
+    'ios',
+    (cfg) => {
+      const podfile = path.join(cfg.modRequest.platformProjectRoot, 'Podfile');
+      let contents = fs.readFileSync(podfile, 'utf8');
+      if (contents.includes("pod 'TelegramLogin'")) return cfg;
 
-    const refs = objects.XCRemoteSwiftPackageReference || {};
-    const already = Object.keys(refs).some(
-      (k) => !k.endsWith('_comment') && String(refs[k].repositoryURL || '').includes('telegram-login-ios'),
-    );
-    if (already) return cfg;
-
-    const pkgUuid = project.generateUuid();
-    const depUuid = project.generateUuid();
-    const buildFileUuid = project.generateUuid();
-    const pkgComment = `XCRemoteSwiftPackageReference "telegram-login-ios"`;
-
-    // node-xcode writes nested values verbatim (no quoting), so quote the URL ourselves — pbxproj needs
-    // it quoted (it has ':' and '-'). `minimumVersion` (e.g. 1.0.0) is safe unquoted, matching Xcode.
-    ensure('XCRemoteSwiftPackageReference')[pkgUuid] = {
-      isa: 'XCRemoteSwiftPackageReference',
-      repositoryURL: `"${spmRepo}"`,
-      requirement: { kind: 'upToNextMajorVersion', minimumVersion: spmMinVersion },
-    };
-    objects.XCRemoteSwiftPackageReference[`${pkgUuid}_comment`] = pkgComment;
-
-    ensure('XCSwiftPackageProductDependency')[depUuid] = {
-      isa: 'XCSwiftPackageProductDependency',
-      package: pkgUuid,
-      package_comment: pkgComment,
-      productName: SPM_PRODUCT,
-    };
-    objects.XCSwiftPackageProductDependency[`${depUuid}_comment`] = SPM_PRODUCT;
-
-    ensure('PBXBuildFile')[buildFileUuid] = {
-      isa: 'PBXBuildFile',
-      productRef: depUuid,
-      productRef_comment: SPM_PRODUCT,
-    };
-    objects.PBXBuildFile[`${buildFileUuid}_comment`] = `${SPM_PRODUCT} in Frameworks`;
-
-    // Register the package on the PBXProject.
-    const { firstProject } = project.getFirstProject();
-    firstProject.packageReferences = firstProject.packageReferences || [];
-    firstProject.packageReferences.push({ value: pkgUuid, comment: pkgComment });
-
-    // Add the product dependency to the app target and link it in the Frameworks build phase.
-    const { firstTarget } = project.getFirstTarget();
-    firstTarget.packageProductDependencies = firstTarget.packageProductDependencies || [];
-    firstTarget.packageProductDependencies.push({ value: depUuid, comment: SPM_PRODUCT });
-
-    const frameworks = objects.PBXFrameworksBuildPhase || {};
-    const phaseRef = (firstTarget.buildPhases || []).find((bp) => frameworks[bp.value]);
-    if (phaseRef) {
-      const phase = frameworks[phaseRef.value];
-      phase.files = phase.files || [];
-      phase.files.push({ value: buildFileUuid, comment: `${SPM_PRODUCT} in Frameworks` });
-    }
-    return cfg;
-  });
+      // vendor/ sits at the repo root, one level up from ios/ (the Podfile's dir).
+      const line = "  pod 'TelegramLogin', :podspec => '../vendor/TelegramLogin.podspec' # Telegram login SDK (SPM source wrapped as a pod)";
+      const anchor = 'use_expo_modules!';
+      if (contents.includes(anchor)) {
+        contents = contents.replace(anchor, anchor + '\n' + line);
+      } else {
+        contents = contents.replace(/target ['"][^'"]+['"] do\n/, (m) => m + line + '\n');
+      }
+      fs.writeFileSync(podfile, contents);
+      return cfg;
+    },
+  ]);
 }
 
 /** Append a VIEW/BROWSABLE intent-filter unless `exists` already finds an equivalent one. */
@@ -212,6 +184,12 @@ const withTelegramLogin = (config, props = {}) => {
     defaultClientId: (props.defaultClientId || '').trim(),
     defaultAppId: (props.defaultAppId || '').trim(),
     scopes: props.scopes && props.scopes.length ? props.scopes : ['profile'],
+    // Append `?mode=developer` to the applinks entitlement so a dev/sideloaded build auto-opens the
+    // tg.dev universal link (needs "Associated Domains Development" on the device). Off for production.
+    appLinksDevMode: props.iosAppLinksDevMode === true,
+    // Force the in-app web-auth flow (skip the cross-app/universal-link return) by omitting tg/tgapi
+    // from LSApplicationQueriesSchemes. Reliable on sideloaded builds where universal links don't fire.
+    forceWebAuth: props.iosForceWebAuth === true,
     // The Telegram iOS SDK Swift package; override for a fork/pin. `iosLinkSdk: false` skips linking it
     // (e.g. a build that only needs the web fallback).
     spmRepo: (props.iosSpmRepo || DEFAULT_SPM_REPO).trim(),
@@ -220,7 +198,7 @@ const withTelegramLogin = (config, props = {}) => {
   };
   config = withIos(config, opts);
   if (opts.linkSdk) {
-    config = withTelegramSpm(config, opts);
+    config = withTelegramPodSpm(config, opts);
   }
   config = withAndroid(config, opts);
   return config;

@@ -11,6 +11,12 @@ import type { CustomRenderer, DivHost } from '../types';
 import { LucideIcon } from './lucide';
 import { Touchable } from '../../ui/touchable';
 
+// The composer bar sits flush on top of the keyboard, but the iOS keyboard's top corners are
+// rounded — so at the bar's bottom-left/right the curve exposes the dark backdrop behind it. Bleed
+// the bar's background this far *below* the keyboard line (paddingBottom +N, marginBottom -N keeps
+// the input where it is) so those corners are filled by the bar colour, not the backdrop.
+const KEYBOARD_BLEED = Platform.OS === 'ios' ? 28 : 0;
+
 // Up to two initials from a display name, for the author avatar fallback.
 function initials(name: string | null | undefined): string {
   if (!name) return '?';
@@ -306,7 +312,7 @@ function Comments({ target, host }: { target: Record<string, any>; host: DivHost
             </ScrollView>
           ) : null}
 
-          <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12, backgroundColor: c.card, borderTopWidth: mq && suggestions.length > 0 ? 0 : 1, borderTopColor: c.border }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12 + KEYBOARD_BLEED, marginBottom: -KEYBOARD_BLEED, backgroundColor: c.card, borderTopWidth: mq && suggestions.length > 0 ? 0 : 1, borderTopColor: c.border }}>
             <TextInput
               autoFocus
               style={{ flex: 1, borderWidth: 1, borderColor: c.fieldBorder, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: c.text, minHeight: 44, maxHeight: 120, backgroundColor: c.fieldBg }}

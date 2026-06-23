@@ -11,7 +11,8 @@
       "bundleIdentifier": "su.onno.onnomobile",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "appleTeamId": "2KRK8M8RB9"
     },
     "android": {
       "package": "su.onno.onnomobile",
@@ -44,7 +45,9 @@
           "universalLinkAppIds": [],
           "defaultClientId": "",
           "defaultAppId": "",
-          "scopes": ["profile"]
+          "scopes": [
+            "profile"
+          ]
         }
       ]
     ],
