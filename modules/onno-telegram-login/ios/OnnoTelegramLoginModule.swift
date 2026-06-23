@@ -30,12 +30,13 @@ public class OnnoTelegramLoginModule: Module {
     Name("OnnoTelegramLogin")
 
     AsyncFunction("login") { (options: [String: Any?], promise: Promise) in
-      DispatchQueue.main.async {
+      Task { @MainActor in
         OnnoTelegramLoginModule.startLogin(options: options, promise: promise)
       }
     }
   }
 
+  @MainActor
   static func startLogin(options: [String: Any?], promise: Promise) {
     #if canImport(TelegramLogin)
     // Per-login overrides (which bot/ERP) take precedence over the build-time default, so one app can
@@ -53,10 +54,9 @@ public class OnnoTelegramLoginModule: Module {
       case .success(let loginData):
         promise.resolve(["idToken": loginData.idToken, "viaWebFallback": false])
       case .failure(let error):
-        switch error {
-        case .cancelled:
+        if let tgError = error as? TelegramLoginError, tgError == .cancelled {
           promise.reject("ERR_TELEGRAM_CANCELLED", "The user cancelled Telegram sign-in.")
-        default:
+        } else {
           promise.reject("ERR_TELEGRAM_FAILED", error.localizedDescription)
         }
       }
@@ -104,6 +104,7 @@ struct TelegramLoginConfig {
     return TelegramLoginConfig(clientId: clientId, redirectUri: redirectUri, scopes: scopes)
   }
 
+  @MainActor
   static func configure(_ cfg: TelegramLoginConfig) {
     // Reconfigure only when the bot actually changes (cheap idempotence across repeat logins).
     let key = "\(cfg.clientId)|\(cfg.redirectUri)|\(cfg.scopes.joined(separator: ","))"
@@ -113,6 +114,7 @@ struct TelegramLoginConfig {
   }
 
   /// Configure from Info.plist if a default bot is set (used at app launch by the AppDelegate subscriber).
+  @MainActor
   static func configureFromInfoPlistIfPossible() {
     if let cfg = resolve(options: [:]) {
       configure(cfg)

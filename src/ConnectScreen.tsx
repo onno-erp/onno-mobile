@@ -264,7 +264,7 @@ export function ConnectScreen({ theme, themePref, onThemePref, servers, bottomIn
               if (invalid) setInvalid(false);
             }}
             onSubmitEditing={submit}
-            placeholder="http://localhost:8899"
+            placeholder="https://demo.cloud.onno.su"
             placeholderTextColor={c.muted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -292,7 +292,7 @@ export function ConnectScreen({ theme, themePref, onThemePref, servers, bottomIn
         </View>
         {invalid && (
           <Text style={[styles.fieldError, { color: c.dangerFg }]}>
-            Enter a valid URL, e.g. http://localhost:8899
+            Enter a valid URL, e.g. https://demo.cloud.onno.su
           </Text>
         )}
 

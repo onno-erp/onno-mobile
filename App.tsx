@@ -372,23 +372,36 @@ export default function App() {
   async function signInWithTelegram(fallbackHref: string | null) {
     const client = clientRef.current;
     if (!client) return;
+    console.log('[tg] signInWithTelegram start — moduleLinked=' + isTelegramLoginAvailable() + ' fallback=' + (fallbackHref ?? 'none'));
     const loadingId = toast.loading('Connecting to Telegram…');
     try {
       const { viaWebFallback } = await runTelegramNativeLogin({ client, telegramLogin });
+      console.log('[tg] runTelegramNativeLogin resolved; viaWebFallback=' + viaWebFallback);
       toast.dismiss(loadingId);
+      // The user may have switched servers while the Telegram sheet was up — don't sign the new one in.
+      if (clientRef.current !== client) { console.log('[tg] server switched mid-flow; ignoring success'); return; }
       setAuthed(true); // session live → open the SSE stream
       setStatus('connecting');
       if (viaWebFallback) toast('Telegram isn’t installed — signed in via the web.');
       await enterApp(theme);
     } catch (e) {
       toast.dismiss(loadingId);
+      const code = e instanceof TelegramLoginError ? e.code : undefined;
+      const status = e instanceof OnnoAuthError ? e.status : undefined;
+      console.log('[tg] signInWithTelegram failed', { name: (e as any)?.name, code, status, message: (e as any)?.message });
+      // A late failure after the user moved on (switched servers) shouldn't pop a toast on the new screen.
+      if (clientRef.current !== client) { console.log('[tg] server switched; suppressing error toast'); return; }
       if (e instanceof TelegramLoginError && e.code === 'cancelled') {
         toast('Telegram sign-in cancelled.');
       } else if (e instanceof TelegramLoginError && e.code === 'unavailable') {
         // The native module isn't in this build — fall back to the server's web SSO flow.
         if (fallbackHref) Linking.openURL(fallbackHref).catch(() => toast.error("Couldn't open the sign-in page"));
+        else toast.error('Telegram login isn’t available in this build.');
       } else if (e instanceof OnnoAuthError && e.status === 401) {
         toast.error('Telegram sign-in failed. Please try again.');
+      } else if (e instanceof OnnoAuthError && e.status != null) {
+        // 404/405 etc. — the server has no native Telegram endpoint (not configured for in-app Telegram login).
+        toast.error(`Telegram sign-in failed (HTTP ${e.status}) — this server may not support in-app Telegram login.`);
       } else {
         toast.error('Couldn’t sign in with Telegram.');
       }
@@ -515,6 +528,7 @@ export default function App() {
 
   // ----- onno:// action routing (mirrors the Flutter HomeShell) -----
   function onAction(url: string) {
+    console.log('[action]', url);
     if (!url.startsWith('onno://')) return;
     const rest = url.slice('onno://'.length);
 
@@ -542,10 +556,16 @@ export default function App() {
         platform: Platform.OS,
         telegramAvailable: isTelegramLoginAvailable(),
       });
-      if (!tap) return;
+      console.log('[tg] sso button tap', { id, to, platform: Platform.OS, telegramAvailable: isTelegramLoginAvailable(), tap });
+      if (!tap) {
+        console.log('[tg] resolveSsoTap returned null (no serverUrl/href) — nothing to do');
+        toast.error("Couldn't start sign-in for this provider.");
+        return;
+      }
       if (tap.kind === 'telegram-native') {
         signInWithTelegram(tap.fallbackHref);
       } else {
+        console.log('[tg] opening web SSO in system browser:', tap.href);
         Linking.openURL(tap.href).catch(() => toast.error("Couldn't open the sign-in page"));
       }
       return;

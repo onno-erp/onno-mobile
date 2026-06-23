@@ -45,7 +45,10 @@ export async function runTelegramNativeLogin(deps: {
       redirectUri: begun?.redirectUri,
       scopes: begun?.scopes,
     };
-  } catch {
+    console.log('[tg] begin OK', { nonce: begun?.nonce ? 'set' : 'none', clientId: begun?.clientId, redirectUri: begun?.redirectUri, scopes: begun?.scopes });
+  } catch (e: any) {
+    // Best-effort: a server without /native/begin (e.g. HTTP 405) just proceeds with the build-time bot.
+    console.log('[tg] begin failed — continuing without nonce/bot config:', e?.status ?? '', e?.message ?? e);
     opts = {};
   }
 
@@ -54,7 +57,9 @@ export async function runTelegramNativeLogin(deps: {
 
   // 3) Exchange the token for a session cookie on the SAME HTTP client, so the cookie persists
   //    across relaunch and authenticates every later /api/** request.
+  console.log('[tg] exchanging id_token at /api/auth/telegram/native …');
   const user = await deps.client.telegramNativeLogin(idToken);
+  console.log('[tg] exchange OK; signed in as', user?.id ?? '?');
 
   return { user, viaWebFallback };
 }

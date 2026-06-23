@@ -55,6 +55,7 @@ interface NativeTelegramModule {
 // `requireOptionalNativeModule` returns null instead of throwing when the module isn't linked,
 // which is exactly the "fall back to the web flow" signal we want.
 const native = requireOptionalNativeModule<NativeTelegramModule>('OnnoTelegramLogin');
+console.log('[tg-native] OnnoTelegramLogin module linked:', native != null);
 
 /** Whether the native Telegram login SDK is linked (a dev-client / standalone build, not Expo Go/web). */
 export function isTelegramLoginAvailable(): boolean {
@@ -64,8 +65,15 @@ export function isTelegramLoginAvailable(): boolean {
 /** Run Telegram's official login SDK and resolve to an ID token (+ whether the web fallback was used). */
 export async function telegramLogin(options: TelegramLoginOptions = {}): Promise<TelegramLoginResult> {
   if (!native) {
+    console.log('[tg-native] login() called but module is NOT linked — throwing unavailable');
     throw new TelegramLoginError('unavailable', 'The Telegram login module is not available in this build.');
   }
+  console.log('[tg-native] calling native.login()', {
+    nonce: options.nonce ? 'set' : 'none',
+    clientId: options.clientId ?? null,
+    redirectUri: options.redirectUri ?? null,
+    scopes: options.scopes ?? null,
+  });
   try {
     const res = await native.login({
       nonce: options.nonce ?? null,
@@ -73,10 +81,12 @@ export async function telegramLogin(options: TelegramLoginOptions = {}): Promise
       redirectUri: options.redirectUri ?? null,
       scopes: options.scopes ?? null,
     });
+    console.log('[tg-native] native.login() resolved; idToken length=' + (res.idToken?.length ?? 0) + ' viaWebFallback=' + (res.viaWebFallback === true));
     return { idToken: res.idToken, viaWebFallback: res.viaWebFallback === true };
   } catch (e: any) {
     // Expo native modules reject with an Error whose `code` is the identifier we threw natively.
     const code = e?.code as string | undefined;
+    console.log('[tg-native] native.login() rejected', { code, message: e?.message });
     if (code === 'ERR_TELEGRAM_CANCELLED') throw new TelegramLoginError('cancelled', 'Telegram sign-in was cancelled.');
     if (code === 'ERR_TELEGRAM_UNAVAILABLE') throw new TelegramLoginError('unavailable', e?.message);
     if (e instanceof TelegramLoginError) throw e;

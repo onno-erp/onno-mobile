@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import Foundation
 
 #if canImport(TelegramLogin)
 import TelegramLogin
@@ -22,7 +23,7 @@ public class OnnoTelegramLoginAppDelegate: ExpoAppDelegateSubscriber {
   ) -> Bool {
     // Configure the SDK as early as possible so a callback arriving right after launch is handled.
     #if canImport(TelegramLogin)
-    TelegramLoginConfig.configureFromInfoPlistIfPossible()
+    Task { @MainActor in TelegramLoginConfig.configureFromInfoPlistIfPossible() }
     #endif
     return true
   }
@@ -62,7 +63,21 @@ public class OnnoTelegramLoginAppDelegate: ExpoAppDelegateSubscriber {
     guard matchesUniversal || matchesScheme else {
       return false
     }
-    TelegramLogin.handle(url)
+    // The cross-app hop backgrounds us while the user signs in, so iOS aborts the idle HTTP/3 socket
+    // the SDK opened to oauth.telegram.org during its pre-flight (the /crossapp fetch). The SDK
+    // completes login with a single POST /token on URLSession.shared — and because a POST is
+    // non-idempotent, URLSession won't auto-retry it. Handing it the code the instant we resume binds
+    // the POST to that just-aborted connection while it's still tearing down (in the logs the socket
+    // abort and the failing POST are ~8ms apart) → NSURLErrorNetworkConnectionLost (-1005), and the
+    // sign-in dies on its very last step (Apple QA1941). So: flush the pool, then let the dead socket
+    // finish tearing down before handing the code to the SDK, which forces the exchange onto a fresh
+    // connection (a brand-new connection to the same host succeeds cleanly ~0.4s later in the logs).
+    // flush (unlike reset) keeps cookies, so it doesn't disturb the app's own session.
+    URLSession.shared.flush {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        Task { @MainActor in TelegramLogin.handle(url) }
+      }
+    }
     return true
     #else
     return false
